@@ -1,251 +1,366 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { startTransition, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 // Resolution presets
 const RESOLUTIONS = {
-    low: { width: 640, height: 480, label: "SD (480p)" },
-    medium: { width: 1280, height: 720, label: "HD (720p)" },
-    high: { width: 1920, height: 1080, label: "Full HD (1080p)" }
+	low: { width: 640, height: 480, label: "SD (480p)" },
+	medium: { width: 1280, height: 720, label: "HD (720p)" },
+	high: { width: 1920, height: 1080, label: "Full HD (1080p)" }
 };
 
 export default function CallPage() {
-    const localVideoRef = useRef(null);
-    const remoteVideoRef = useRef(null);
+	const localVideoRef = useRef(null);
+	const remoteVideoRef = useRef(null);
 
-    const [localStream, setLocalStream] = useState(null);
-    const [isVideoOn, setIsVideoOn] = useState(true);
-    const [isAudioOn, setIsAudioOn] = useState(true);
-    const [error, setError] = useState(null);
+	const [localStream, setLocalStream] = useState(null);
+	const [isVideoOn, setIsVideoOn] = useState(true);
+	const [isAudioOn, setIsAudioOn] = useState(true);
+	const [error, setError] = useState(null);
 
-    const [showSettings, setShowSettings] = useState(false);
-    const [resolution, setResolution] = useState("medium");
+	const [showSettings, setShowSettings] = useState(false);
+	const [resolution, setResolution] = useState("medium");
 
-    const navigate = useNavigate();
+	const pcRef = useRef(null);
+	const wsRef = useRef(null);
+	const pendingCandidates = useRef([]);
 
-    // --------- PURE FUNCTION (no setState allowed here) ------
-    const requestMediaStream = async (resolutionKey) => {
-        try {
-            const res = RESOLUTIONS[resolutionKey];
+	const navigate = useNavigate();
 
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: {
-                    width: { ideal: res.width },
-                    height: { ideal: res.height }
-                },
-                audio: true
-            });
+	// --------- PURE FUNCTION (no setState allowed here) ------
+	const requestMediaStream = async (resolutionKey) => {
+		try {
+			const res = RESOLUTIONS[resolutionKey];
 
-            return { stream, error: null };
+			const stream = await navigator.mediaDevices.getUserMedia({
+				video: {
+					width: { ideal: res.width },
+					height: { ideal: res.height }
+				},
+				audio: true
+			});
 
-        } catch (err) {
-            console.error("Media Device Error:", err);
-            return { stream: null, error: "Unable to access camera/microphone. Please grant permissions and refresh." };
-        }
-    };
+			return { stream, error: null };
 
-    // --------- INITIAL STARTUP ---------
-    useEffect(() => {
-        let active = true;
+		} catch (err) {
+			console.error("Media Device Error:", err);
+			return { stream: null, error: "Unable to access camera/microphone. Please grant permissions and refresh." };
+		}
+	};
 
-        const init = async () => {
-            const { stream, error } = await requestMediaStream("medium");
+	// --------- INITIAL STARTUP ---------
+	useEffect(() => {
+		let active = true;
 
-            if (!active) return;
+		const init = async () => {
+			const { stream, error } = await requestMediaStream("medium");
 
-            if (error) {
-                setError(error);
-                return;
-            }
+			if (!active) return;
 
-            // Stop existing stream safely
-            if (localStream) {
-                localStream.getTracks().forEach(t => t.stop());
-            }
+			if (error) {
+				setError(error);
+				return;
+			}
 
-            setLocalStream(stream);
-            setError(null);
+			// Stop existing stream safely
+			if (localStream) {
+				localStream.getTracks().forEach(t => t.stop());
+			}
 
-            // Attach to video element
-            if (localVideoRef.current) {
-                localVideoRef.current.srcObject = stream;
-            }
-        };
+			setLocalStream(stream);
+			setError(null);
 
-        init();
+			// Attach to video element
+			if (localVideoRef.current) {
+				localVideoRef.current.srcObject = stream;
+			}
 
-        return () => { active = false; };
-    }, []);
+			const pc = new RTCPeerConnection({
+				iceServers: [
+					{ urls: "stun:stun.l.google.com:19302" },
+				],
+			});
 
-    // -------- RESOLUTION CHANGE ----------
-    const handleResolutionChange = async (newRes) => {
-        setResolution(newRes);
+			pcRef.current = pc;
 
-        const { stream, error } = await requestMediaStream(newRes);
+			stream.getTracks().forEach((track) => {
+				pc.addTrack(track, stream);
+			});
 
-        if (error) {
-            setError(error);
-            return;
-        }
+			pc.ontrack = (event) => {
+				remoteVideoRef.current.srcObject = event.streams[0];
+			};
 
-        // stop old stream
-        if (localStream) {
-            localStream.getTracks().forEach(t => t.stop());
-        }
+			//pc.onicecandidate = (event) => {
+			//	if (event.candidate) {
+			//		setLocalCandidates((prev) => [...prev, event.candidate]);
+			//	}
+			//};
 
-        setLocalStream(stream);
-        setShowSettings(false);
 
-        if (localVideoRef.current) {
-            localVideoRef.current.srcObject = stream;
-        }
-    };
+			//const ws = new WebSocket("wss://192.168.101.4:8080");
+			const ws = new WebSocket("ws://localhost:8080");
+			wsRef.current = ws;
 
-    // ----------- TOGGLE VIDEO ----------
-    const toggleVideo = () => {
-        if (!localStream) return;
+			ws.onopen = () => console.log("Connected to signaling server");
+			ws.onmessage = (msg) => handleSignalingMessage(msg.data);
 
-        const track = localStream.getVideoTracks()[0];
-        if (track) {
-            track.enabled = !track.enabled;
-            setIsVideoOn(track.enabled);
-        }
-    };
+			// Send ICE candidates to remote peer
+			pc.onicecandidate = (event) => {
+				if (event.candidate && ws.readyState === 1) {
+					ws.send(
+						JSON.stringify({ type: "ice", candidate: event.candidate})
+					);
+				}
+			};
 
-    // ----------- TOGGLE AUDIO ----------
-    const toggleAudio = () => {
-        if (!localStream) return;
+		};
 
-        const track = localStream.getAudioTracks()[0];
-        if (track) {
-            track.enabled = !track.enabled;
-            setIsAudioOn(track.enabled);
-        }
-    };
+		init();
 
-    // ----------- END CALL ----------
-    const handleEndCall = () => {
-        if (localStream) {
-            localStream.getTracks().forEach(track => track.stop());
-        }
-        navigate("/");
-    };
+		return () => { active = false; };
+	}, []);
 
-    return (
-        <div className="w-full min-h-screen flex flex-col bg-black">
-            <div className="flex-1 relative text-white flex items-stretch">
+	const handleSignalingMessage = async (data) => {
+		const message = JSON.parse(data);
 
-                {/* Remote video */}
-                <div className="flex-1 flex items-center justify-center bg-gray-800">
-                    <video
-                        ref={remoteVideoRef}
-                        autoPlay
-                        playsInline
-                        className="w-full h-full object-cover"
-                    />
-                    <p className="absolute text-lg opacity-60 px-4">
-                        Waiting for remote user...
-                    </p>
-                </div>
+		const pc = pcRef.current;
 
-                {/* Local video preview */}
-                <div className="absolute top-4 right-4 w-40 h-32 sm:w-48 sm:h-36 bg-gray-900 rounded-lg overflow-hidden border-2 border-gray-700 shadow-xl">
-                    <video
-                        ref={localVideoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="w-full h-full object-cover"
-                        style={{ transform: "scaleX(-1)" }}
-                    />
+		if (message.type === "offer") {
+			console.log("Received offer");
+			await pc.setRemoteDescription(new RTCSessionDescription(message.offer));
 
-                    {!isVideoOn && (
-                        <div className="absolute inset-0 bg-gray-900 flex items-center justify-center">
-                            <span className="text-4xl">👤</span>
-                        </div>
-                    )}
+			// Add queued ICE candidates
+			for (const c of pendingCandidates.current) {
+				try {
+					await pc.addIceCandidate(c);
+				} catch (e) {
+					console.error("Error adding queued ICE candidate", e);
+				}
+			}
+			pendingCandidates.current = [];
 
-                    <div className="absolute bottom-1 left-1 bg-black bg-opacity-70 px-2 text-xs rounded">
-                        You • {RESOLUTIONS[resolution].label}
-                    </div>
-                </div>
+			// Send answer
+			const answer = await pc.createAnswer();
+			await pc.setLocalDescription(answer);
 
-                {/* Error message */}
-                {error && (
-                    <div className="absolute top-4 left-4 bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg max-w-md text-sm">
-                        {error}
-                    </div>
-                )}
+			wsRef.current.send(
+				JSON.stringify({ type: "answer", answer} )
+			);
+		}
 
-                {/* Settings panel */}
-                {showSettings && (
-                    <div className="absolute top-20 right-4 bg-gray-900 border border-gray-700 rounded-lg shadow-2xl p-4 w-64">
-                        <h3 className="text-sm font-semibold mb-3">Video Quality</h3>
+		if (message.type === "answer") {
+			console.log("Received answer");
+			await pc.setRemoteDescription(new RTCSessionDescription(message.answer));
 
-                        {Object.entries(RESOLUTIONS).map(([key, value]) => (
-                            <button
-                                key={key}
-                                onClick={() => handleResolutionChange(key)}
-                                className={`w-full px-3 py-2 rounded mb-2 text-left ${resolution === key
-                                        ? "bg-blue-600 text-white"
-                                        : "bg-gray-800 text-gray-300 hover:bg-gray-700"
-                                    }`}
-                            >
-                                <div className="font-medium text-sm">{value.label}</div>
-                                <div className="text-xs opacity-70">
-                                    {value.width} × {value.height}
-                                </div>
-                            </button>
-                        ))}
+			// Add queued ICE candidates
+			for (const c of pendingCandidates.current) {
+				try {
+					await pc.addIceCandidate(c);
+				} catch (e) {
+					console.error("Error adding queued ICE candidate", e);
+				}
+			}
+			pendingCandidates.current = [];
+		}
 
-                        <p className="text-xs text-gray-400 mt-3 border-t pt-2">
-                            Higher quality uses more bandwidth.
-                        </p>
-                    </div>
-                )}
+		if (message.type === "ice" ) {
+			const candidate = new RTCIceCandidate(message.candidate);
 
-                {/* Bottom controls */}
-                <div className="absolute bottom-6 left-0 right-0 flex justify-center gap-4">
+			// Queue ICE candidates if remote description isn't set yet
+			if (!pc.currentRemoteDescription) {
+				pendingCandidates.current.push(candidate);
+			} else {
+				try {
+					await pc.addIceCandidate(candidate);
+				} catch (e) {
+					console.error("Eror adding ICE candidate", e);
+				}
+			}
+		}
 
-                    {/* End Call */}
-                    <button
-                        onClick={handleEndCall}
-                        className="px-6 py-3 bg-red-600 hover:bg-red-700 rounded-full text-sm font-medium shadow-lg"
-                    >
-                        End Call
-                    </button>
+		// Optional: Automatically create offer if second peer connects
+		if (message.type === "join" && !pc.currentRemoteDescription && wsRef.current.readyState === 1) {
+			// Only create offer if we don't have remote description yet
+			//if (!pc.currentRemoteDescription) {
+				const offer = await pc.createOffer();
+				await pc.setLocalDescription(offer);
+				wsRef.current.send(
+					JSON.stringify({ type: "offer", offer})
+				);
+			//}
+		}
+	};
 
-                    {/* Controls */}
-                    <div className="flex gap-3 bg-gray-800 bg-opacity-80 rounded-full p-2 shadow-lg backdrop-blur">
+	// -------- RESOLUTION CHANGE ----------
+	const handleResolutionChange = async (newRes) => {
+		setResolution(newRes);
 
-                        {/* Audio */}
-                        <button
-                            onClick={toggleAudio}
-                            className={`p-3 rounded-full transition ${isAudioOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
-                                }`}
-                        >
-                            <span className="text-xl">{isAudioOn ? "🎙️" : "🔇"}</span>
-                        </button>
+		const { stream, error } = await requestMediaStream(newRes);
 
-                        {/* Video */}
-                        <button
-                            onClick={toggleVideo}
-                            className={`p-3 rounded-full transition ${isVideoOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
-                                }`}
-                        >
-                            <span className="text-xl">{isVideoOn ? "🎥" : "📷"}</span>
-                        </button>
+		if (error) {
+			setError(error);
+			return;
+		}
 
-                        {/* Settings */}
-                        <button
-                            onClick={() => setShowSettings(!showSettings)}
-                            className={`p-3 rounded-full ${showSettings ? "bg-blue-600" : "bg-gray-700 hover:bg-gray-600"
-                                }`}
-                        >
-                            <span className="text-xl">⚙️</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
+		// stop old stream
+		if (localStream) {
+			localStream.getTracks().forEach(t => t.stop());
+		}
+
+		setLocalStream(stream);
+		setShowSettings(false);
+
+		if (localVideoRef.current) {
+			localVideoRef.current.srcObject = stream;
+		}
+	};
+
+	// ----------- TOGGLE VIDEO ----------
+	const toggleVideo = () => {
+		if (!localStream) return;
+
+		const track = localStream.getVideoTracks()[0];
+		if (track) {
+			track.enabled = !track.enabled;
+			setIsVideoOn(track.enabled);
+		}
+	};
+
+	// ----------- TOGGLE AUDIO ----------
+	const toggleAudio = () => {
+		if (!localStream) return;
+
+		const track = localStream.getAudioTracks()[0];
+		if (track) {
+			track.enabled = !track.enabled;
+			setIsAudioOn(track.enabled);
+		}
+	};
+
+	// ----------- END CALL ----------
+	const handleEndCall = () => {
+		if (localStream) {
+			localStream.getTracks().forEach(track => track.stop());
+		}
+		navigate("/");
+	};
+
+	return (
+		<div className="w-full min-h-screen flex flex-col bg-black">
+			<div className="flex-1 relative text-white flex items-stretch">
+
+				{/* Remote video */}
+				<div className="flex-1 flex items-center justify-center bg-gray-800">
+					<video
+						ref={remoteVideoRef}
+						autoPlay
+						playsInline
+						className="w-full h-full object-cover"
+					/>
+					<p className="absolute text-lg opacity-60 px-4">
+						Waiting for remote user...
+					</p>
+				</div>
+
+				{/* Local video preview */}
+				<div className="absolute top-4 right-4 w-40 h-32 sm:w-48 sm:h-36 bg-gray-900 rounded-lg overflow-hidden border-2 border-gray-700 shadow-xl">
+					<video
+						ref={localVideoRef}
+						autoPlay
+						playsInline
+						muted
+						className="w-full h-full object-cover"
+						style={{ transform: "scaleX(-1)" }}
+					/>
+
+					{!isVideoOn && (
+						<div className="absolute inset-0 bg-gray-900 flex items-center justify-center">
+							<span className="text-4xl">👤</span>
+						</div>
+					)}
+
+					<div className="absolute bottom-1 left-1 bg-black bg-opacity-70 px-2 text-xs rounded">
+						You • {RESOLUTIONS[resolution].label}
+					</div>
+				</div>
+
+				{/* Error message */}
+				{error && (
+					<div className="absolute top-4 left-4 bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg max-w-md text-sm">
+						{error}
+					</div>
+				)}
+
+				{/* Settings panel */}
+				{showSettings && (
+					<div className="absolute top-20 right-4 bg-gray-900 border border-gray-700 rounded-lg shadow-2xl p-4 w-64">
+						<h3 className="text-sm font-semibold mb-3">Video Quality</h3>
+
+						{Object.entries(RESOLUTIONS).map(([key, value]) => (
+							<button
+								key={key}
+								onClick={() => handleResolutionChange(key)}
+								className={`w-full px-3 py-2 rounded mb-2 text-left ${resolution === key
+									? "bg-blue-600 text-white"
+									: "bg-gray-800 text-gray-300 hover:bg-gray-700"
+									}`}
+							>
+								<div className="font-medium text-sm">{value.label}</div>
+								<div className="text-xs opacity-70">
+									{value.width} × {value.height}
+								</div>
+							</button>
+						))}
+
+						<p className="text-xs text-gray-400 mt-3 border-t pt-2">
+							Higher quality uses more bandwidth.
+						</p>
+					</div>
+				)}
+
+				{/* Bottom controls */}
+				<div className="absolute bottom-6 left-0 right-0 flex justify-center gap-4">
+
+					{/* End Call */}
+					<button
+						onClick={handleEndCall}
+						className="px-6 py-3 bg-red-600 hover:bg-red-700 rounded-full text-sm font-medium shadow-lg"
+					>
+						End Call
+					</button>
+
+					{/* Controls */}
+					<div className="flex gap-3 bg-gray-800 bg-opacity-80 rounded-full p-2 shadow-lg backdrop-blur">
+
+						{/* Audio */}
+						<button
+							onClick={toggleAudio}
+							className={`p-3 rounded-full transition ${isAudioOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
+								}`}
+						>
+							<span className="text-xl">{isAudioOn ? "🎙️" : "🔇"}</span>
+						</button>
+
+						{/* Video */}
+						<button
+							onClick={toggleVideo}
+							className={`p-3 rounded-full transition ${isVideoOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
+								}`}
+						>
+							<span className="text-xl">{isVideoOn ? "🎥" : "📷"}</span>
+						</button>
+
+						{/* Settings */}
+						<button
+							onClick={() => setShowSettings(!showSettings)}
+							className={`p-3 rounded-full ${showSettings ? "bg-blue-600" : "bg-gray-700 hover:bg-gray-600"
+								}`}
+						>
+							<span className="text-xl">⚙️</span>
+						</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	);
 }
