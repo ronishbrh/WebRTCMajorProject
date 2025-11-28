@@ -1,0 +1,9 @@
+- [ ] List supported resolition. afaile arbitrary resolution set garne milne hoki number of supported resolution ho.
+- [ ] List input video sources. mobile ma fron and back camera ko laagi
+- [ ] Call aayo vanne indicator or page
+- [ ] Generate ECDSA key pair
+- [ ] store ECDSA key pair locally
+- [ ] Ability to add peaple(contacts). a page or form to enter other peoples key pair.
+- [ ] Secure the signaling process. Encrypt/decrypt offer and ice candidates between peers.
+- [ ] Handle renegotiation, retry call
+- [ ] Make the client PWA
