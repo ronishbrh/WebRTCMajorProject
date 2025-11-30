@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useUser } from "../utils/UserContext";
 
 // Resolution presets
 const RESOLUTIONS = {
@@ -27,6 +28,11 @@ export default function CallPage() {
 	const pendingCandidates = useRef([]);
 
 	const navigate = useNavigate();
+	const {identity} = useUser();
+
+	if (!identity) {
+		navigate("/login");
+	}
 
 	// --------- PURE FUNCTION (no setState allowed here) ------
 	const requestMediaStream = async (resolutionKey) => {

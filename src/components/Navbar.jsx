@@ -2,7 +2,7 @@ import profileIcon from "../assets/userProfileGeneric.png";
 
 //const profileIcon = "https://via.placeholder.com/80";
 
-export default function Navbar({ onHomeClick, username = "Your Name", key = "" }) {
+export default function Navbar({ onHomeClick, userName = "Your Name"}) {
   return (
     <nav className="w-full bg-white shadow px-4 py-3 sm:px-6 sm:py-4 flex items-center justify-between">
       <h1
@@ -20,8 +20,7 @@ export default function Navbar({ onHomeClick, username = "Your Name", key = "" }
         />
 
         <div className="hidden sm:block leading-tight text-right">
-          <p className="font-medium">{username}</p>
-          <p className="text-sm text-gray-500">{key}</p>
+          <p className="font-medium">{userName}</p>
         </div>
       </div>
     </nav>

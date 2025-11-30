@@ -1,11 +1,14 @@
 - [ ] List supported resolition. afaile arbitrary resolution set garne milne hoki number of supported resolution ho.
 - [ ] List input video sources. mobile ma fron and back camera ko laagi
 - [ ] Call aayo vanne indicator or page
-- [ ] Generate ECDSA key pair
-- [ ] store ECDSA key pair locally
+- [x] Generate ECDSA key pair
+- [x] store ECDSA key pair locally
+- [ ] Store other user's contact detail
 - [ ] Ability to add peaple(contacts). a page or form to enter other peoples key pair.
 - [ ] Secure the signaling process. Encrypt/decrypt offer and ice candidates between peers.
 - [ ] Handle renegotiation, retry call
 - [ ] Make the client PWA
 - [ ] display stats such as bandwidth, bitrate, quality if possible
-- [ ] The camera indicator is still on after peer disconnects
+- [ ] The camera indicator is still on after peer disconnects. Properly release resources.
+- [ ] Login Page UI
+- [ ] don't show Public key in navbar but rather in profile

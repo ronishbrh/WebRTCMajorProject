@@ -1,5 +1,5 @@
 // Step 2: Generate ECDH Key Pair for shared secret
-async function generateECDHKeys() {
+export async function generateECDHKeys() {
 	return await crypto.subtle.generateKey(
 		{
 			name: "ECDH",
@@ -10,8 +10,15 @@ async function generateECDHKeys() {
 	);
 }
 
+export async function exportKey(key) {
+	const exported = await window.crypto.subtle.exportKey("spki", key); // for public key
+	const exportedKeyBuffer = new Uint8Array(exported);
+	const base64Key = btoa(String.fromCharCode(...exportedKeyBuffer));
+	return base64Key;
+}
+
 // Step 4: Derive shared secret from ECDH public and private keys
-async function deriveSharedSecret(privateKey, publicKey) {
+export async function deriveSharedSecret(privateKey, publicKey) {
 	const sharedBits = await crypto.subtle.deriveBits(
 		{
 			name: "ECDH",
@@ -24,7 +31,7 @@ async function deriveSharedSecret(privateKey, publicKey) {
 }
 
 // Step 5: Import shared secret to create an AES key
-async function importAESKey(sharedSecret) {
+export async function importAESKey(sharedSecret) {
 	return await crypto.subtle.importKey(
 		"raw", // Format
 		sharedSecret, // Shared secret
@@ -35,7 +42,7 @@ async function importAESKey(sharedSecret) {
 }
 
 // Step 6: Encrypt data with AES-GCM
-async function encryptAES(data, aesKey) {
+export async function encryptAES(data, aesKey) {
 	const iv = crypto.getRandomValues(new Uint8Array(12)); // Generate random IV (12 bytes)
 	const encrypted = await crypto.subtle.encrypt(
 		{
@@ -49,7 +56,7 @@ async function encryptAES(data, aesKey) {
 }
 
 // Step 7: Decrypt data with AES-GCM
-async function decryptAES(encryptedData, aesKey, iv) {
+export async function decryptAES(encryptedData, aesKey, iv) {
 	try {
 		const decrypted = await crypto.subtle.decrypt(
 			{
