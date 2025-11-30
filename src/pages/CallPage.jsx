@@ -1,4 +1,4 @@
-import React, { startTransition, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 // Resolution presets
@@ -13,9 +13,11 @@ export default function CallPage() {
 	const remoteVideoRef = useRef(null);
 
 	const [localStream, setLocalStream] = useState(null);
+	const [remoteStream, setRemoteStream] = useState(null);
 	const [isVideoOn, setIsVideoOn] = useState(true);
 	const [isAudioOn, setIsAudioOn] = useState(true);
 	const [error, setError] = useState(null);
+	const [showEndCallNotification, setShowEndCallNotification] = useState(false);
 
 	const [showSettings, setShowSettings] = useState(false);
 	const [resolution, setResolution] = useState("medium");
@@ -47,6 +49,99 @@ export default function CallPage() {
 		}
 	};
 
+	const handleSignalingMessage = async (data) => {
+		const message = JSON.parse(data);
+
+		const pc = pcRef.current;
+
+		if (message.type === "offer") {
+			console.log("Received offer");
+			await pc.setRemoteDescription(new RTCSessionDescription(message.offer));
+
+			// Add queued ICE candidates
+			for (const c of pendingCandidates.current) {
+				try {
+					await pc.addIceCandidate(c);
+				} catch (e) {
+					console.error("Error adding queued ICE candidate", e);
+				}
+			}
+			pendingCandidates.current = [];
+
+			// Send answer
+			const answer = await pc.createAnswer();
+			await pc.setLocalDescription(answer);
+
+			wsRef.current.send(
+				JSON.stringify({ type: "answer", answer })
+			);
+		}
+
+		if (message.type === "answer") {
+			console.log("Received answer");
+			await pc.setRemoteDescription(new RTCSessionDescription(message.answer));
+
+			// Add queued ICE candidates
+			for (const c of pendingCandidates.current) {
+				try {
+					await pc.addIceCandidate(c);
+				} catch (e) {
+					console.error("Error adding queued ICE candidate", e);
+				}
+			}
+			pendingCandidates.current = [];
+		}
+
+		if (message.type === "ice") {
+			const candidate = new RTCIceCandidate(message.candidate);
+
+			// Queue ICE candidates if remote description isn't set yet
+			if (!pc.currentRemoteDescription) {
+				pendingCandidates.current.push(candidate);
+			} else {
+				try {
+					await pc.addIceCandidate(candidate);
+				} catch (e) {
+					console.error("Eror adding ICE candidate", e);
+				}
+			}
+		}
+
+		// Optional: Automatically create offer if second peer connects
+		if (message.type === "join" && !pc.currentRemoteDescription && wsRef.current.readyState === 1) {
+			// Only create offer if we don't have remote description yet
+			//if (!pc.currentRemoteDescription) {
+			const offer = await pc.createOffer();
+			await pc.setLocalDescription(offer);
+			wsRef.current.send(
+				JSON.stringify({ type: "offer", offer })
+			);
+			//}
+		}
+
+		if (message.type === "end-call") {
+			console.log("Remote user ended call");
+
+			setShowEndCallNotification(true);
+			setTimeout(() => {
+				if (localStream) {
+					localStream.getTracks().forEach(track => track.stop());
+				}
+
+				if(pcRef.current)
+					pcRef.current.close();
+
+				if(wsRef.current)
+					wsRef.current.close();
+
+				navigate("/");
+				return;
+			}, 3000);
+			return;
+		}
+	};
+
+
 	// --------- INITIAL STARTUP ---------
 	useEffect(() => {
 		let active = true;
@@ -76,7 +171,7 @@ export default function CallPage() {
 
 			const pc = new RTCPeerConnection({
 				iceServers: [
-					{ urls: "stun:stun.l.google.com:19302" },
+					{ urls: ["stun:stun.l.google.com:19302"] },
 				],
 			});
 
@@ -87,7 +182,9 @@ export default function CallPage() {
 			});
 
 			pc.ontrack = (event) => {
-				remoteVideoRef.current.srcObject = event.streams[0];
+				const stream = event.streams[0];
+				remoteVideoRef.current.srcObject = stream;
+				setRemoteStream(stream);
 			};
 
 			//pc.onicecandidate = (event) => {
@@ -108,7 +205,7 @@ export default function CallPage() {
 			pc.onicecandidate = (event) => {
 				if (event.candidate && ws.readyState === 1) {
 					ws.send(
-						JSON.stringify({ type: "ice", candidate: event.candidate})
+						JSON.stringify({ type: "ice", candidate: event.candidate })
 					);
 				}
 			};
@@ -117,79 +214,29 @@ export default function CallPage() {
 
 		init();
 
-		return () => { active = false; };
+		return () => {
+			active = false;
+
+			if(localStream){
+				localStream.getTracks().forEach(t => t.stop());
+			}
+
+			
+
+			if (pcRef.current) {
+				pcRef.current.close();
+				pcRef.current = null;
+
+			}
+			if (wsRef.current && wsRef.current.readyState === 1) {
+				wsRef.current.close();
+				wsRef.current = null;
+			}
+
+		};
 	}, []);
 
-	const handleSignalingMessage = async (data) => {
-		const message = JSON.parse(data);
 
-		const pc = pcRef.current;
-
-		if (message.type === "offer") {
-			console.log("Received offer");
-			await pc.setRemoteDescription(new RTCSessionDescription(message.offer));
-
-			// Add queued ICE candidates
-			for (const c of pendingCandidates.current) {
-				try {
-					await pc.addIceCandidate(c);
-				} catch (e) {
-					console.error("Error adding queued ICE candidate", e);
-				}
-			}
-			pendingCandidates.current = [];
-
-			// Send answer
-			const answer = await pc.createAnswer();
-			await pc.setLocalDescription(answer);
-
-			wsRef.current.send(
-				JSON.stringify({ type: "answer", answer} )
-			);
-		}
-
-		if (message.type === "answer") {
-			console.log("Received answer");
-			await pc.setRemoteDescription(new RTCSessionDescription(message.answer));
-
-			// Add queued ICE candidates
-			for (const c of pendingCandidates.current) {
-				try {
-					await pc.addIceCandidate(c);
-				} catch (e) {
-					console.error("Error adding queued ICE candidate", e);
-				}
-			}
-			pendingCandidates.current = [];
-		}
-
-		if (message.type === "ice" ) {
-			const candidate = new RTCIceCandidate(message.candidate);
-
-			// Queue ICE candidates if remote description isn't set yet
-			if (!pc.currentRemoteDescription) {
-				pendingCandidates.current.push(candidate);
-			} else {
-				try {
-					await pc.addIceCandidate(candidate);
-				} catch (e) {
-					console.error("Eror adding ICE candidate", e);
-				}
-			}
-		}
-
-		// Optional: Automatically create offer if second peer connects
-		if (message.type === "join" && !pc.currentRemoteDescription && wsRef.current.readyState === 1) {
-			// Only create offer if we don't have remote description yet
-			//if (!pc.currentRemoteDescription) {
-				const offer = await pc.createOffer();
-				await pc.setLocalDescription(offer);
-				wsRef.current.send(
-					JSON.stringify({ type: "offer", offer})
-				);
-			//}
-		}
-	};
 
 	// -------- RESOLUTION CHANGE ----------
 	const handleResolutionChange = async (newRes) => {
@@ -201,6 +248,21 @@ export default function CallPage() {
 			setError(error);
 			return;
 		}
+
+		const pc = pcRef.current;
+		if (pc) {
+			const videoTrack = stream.getVideoTracks()[0];
+			const audioTrack = stream.getAudioTracks()[0];
+
+			const videoSender = pc.getSenders().find(sender => sender.track && sender.track.kind === 'video');
+			if (videoSender && videoTrack)
+				await videoSender.replaceTrack(videoTrack);
+
+			const audioSender = pc.getSenders().find(sender => sender.track && sender.track.kind == 'audio');
+			if (audioSender & audioTrack)
+				await audioSender.replaceTrack(audioTrack);
+		}
+
 
 		// stop old stream
 		if (localStream) {
@@ -239,9 +301,19 @@ export default function CallPage() {
 
 	// ----------- END CALL ----------
 	const handleEndCall = () => {
+		if (wsRef.current && wsRef.current.readyState === 1) {
+			wsRef.current.send(JSON.stringify({ type: "end-call" }));
+		}
+
 		if (localStream) {
 			localStream.getTracks().forEach(track => track.stop());
 		}
+
+		if (pcRef.current)
+			pcRef.current.close();
+
+		if (wsRef.current)
+			wsRef.current.close();
 		navigate("/");
 	};
 
@@ -257,9 +329,11 @@ export default function CallPage() {
 						playsInline
 						className="w-full h-full object-cover"
 					/>
-					<p className="absolute text-lg opacity-60 px-4">
-						Waiting for remote user...
-					</p>
+					{!remoteStream && (
+						<p className="absolute text-lg opacity-60 px-4">
+							Waiting for remote user...
+						</p>
+					)}
 				</div>
 
 				{/* Local video preview */}
@@ -288,6 +362,15 @@ export default function CallPage() {
 				{error && (
 					<div className="absolute top-4 left-4 bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg max-w-md text-sm">
 						{error}
+					</div>
+				)}
+
+				{/* End Call Notification */}
+				{showEndCallNotification && (
+					<div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 border-2 border-red-500 text-white px-8 py-6 rounded-lg shadow-2xl z-50 text-center">
+						<div className="text-4xl mb-3">📞</div>
+						<div className="text-lg font-semibold">Call Ended</div>
+						<div className="text-sm text-gray-400 mt-2">Remote user ended the call</div>
 					</div>
 				)}
 
