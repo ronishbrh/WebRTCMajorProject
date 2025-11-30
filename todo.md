@@ -7,3 +7,5 @@
 - [ ] Secure the signaling process. Encrypt/decrypt offer and ice candidates between peers.
 - [ ] Handle renegotiation, retry call
 - [ ] Make the client PWA
+- [ ] display stats such as bandwidth, bitrate, quality if possible
+- [ ] The camera indicator is still on after peer disconnects
