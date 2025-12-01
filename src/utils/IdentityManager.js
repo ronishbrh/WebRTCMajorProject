@@ -133,4 +133,24 @@ export class IdentityManager {
 		if (!record) return null;
 		return this._decrypt(record, aesKey);
 	}
+
+	// Add a contact for the given user
+	async addContact(userName, contact) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		record.contacts = record.contacts || [];
+		record.contacts.push(contact);
+
+		await this._storeObject("keys", userName, record);
+	}
+
+	// Get contacts for a given user
+	async getContacts(userName) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		return record.contacts || [];
+	}
+
 }

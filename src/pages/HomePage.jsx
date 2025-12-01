@@ -1,47 +1,69 @@
-import React, { useEffect, useState } from "react";
-import Navbar from "../components/Navbar";
+import { useEffect, useState } from "react";
+import Navbar from "../components/Navbar.jsx";
 import UserCard from "../components/UserCard";
 import { useNavigate } from "react-router-dom";
 import { useUser } from "../utils/UserContext";
-import { exportKey } from "../utils/crypto";
+import { IdentityManager } from "../utils/IdentityManager.js";
 
-const CONNECTIONS = [
-	{ id: 1, name: "User One", status: "Available", avatar: "https://placehold.co/80x80?text=U1" },
-	{ id: 2, name: "User Two", status: "Available", avatar: "https://placehold.co/80x80?text=U2" },
-	{ id: 3, name: "User Three", status: "Away", avatar: "https://placehold.co/80x80?text=U3" },
-];
 export default function HomePage() {
-	const navigate = useNavigate();
+  const navigate = useNavigate();
+  const { identity } = useUser();
+  const identityManager = new IdentityManager();
 
-	const { identity } = useUser();
+  const [contacts, setContacts] = useState([]);
 
-	useEffect(() => {
-		if (!identity) navigate("/");
-	});
+  // Fetch contacts from IndexedDB
+  useEffect(() => {
+    if (!identity) {
+      navigate("/");
+      return;
+    }
 
-	const handleCall = (userName) => {
-		// navigate to call route (SPA)
-		navigate(`/call/${userName}`);
-	};
+    const loadContacts = async () => {
+      try {
+        const storedContacts = await identityManager.getContacts(identity.userName);
+        setContacts(storedContacts || []);
+      } catch (err) {
+        console.error("Failed to load contacts:", err);
+      }
+    };
 
-	return (
-		<div className="w-full min-h-screen flex flex-col">
-			<Navbar onHomeClick={() => navigate("/home")} userName={identity?.userName} />
+    loadContacts();
+  }, [identity, navigate]);
 
-			<main className="p-4 sm:p-6 flex-1">
-				<h2 className="text-2xl font-semibold mb-4">Connections</h2>
+  const handleCall = (contact) => {
+    navigate(`/call/${contact.userName}`);
+  };
 
-				<div className="space-y-3 w-full max-w-xl mx-auto mt-2">
-					{CONNECTIONS.map((c) => (
-						<UserCard
-							key={c.id}
-							user={c}
-							onClick={() => handleCall(c.id)}
-							onCall={() => handleCall(c.id)}
-						/>
-					))}
-				</div>
-			</main>
-		</div>
-	);
+  return (
+    <div className="w-full min-h-screen flex flex-col">
+      <Navbar 
+        onHomeClick={() => navigate("/home")} 
+        onProfileClick={() => navigate("/profile")} 
+        onContactClick={() => navigate("/contact")}
+      />
+
+      <main className="p-4 sm:p-6 flex-1">
+        <h2 className="text-2xl font-semibold mb-4">Connections</h2>
+
+        <div className="space-y-3 w-full max-w-xl mx-auto mt-2">
+          {contacts.length === 0 ? (
+            <p className="text-gray-500">No contacts found.</p>
+          ) : (
+            contacts.map((contact) => (
+              <UserCard
+                key={contact.userName} // username as unique key
+                user={{
+                  name: contact.userName,
+                  avatar: contact.avatar || "https://placehold.co/80x80?text=U",
+                }}
+                onClick={() => handleCall(contact)}
+                onCall={() => handleCall(contact)}
+              />
+            ))
+          )}
+        </div>
+      </main>
+    </div>
+  );
 }
