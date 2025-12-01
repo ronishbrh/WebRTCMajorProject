@@ -10,12 +10,46 @@ export async function generateECDHKeys() {
 	);
 }
 
-export async function exportKey(key) {
-	const exported = await window.crypto.subtle.exportKey("spki", key); // for public key
-	const exportedKeyBuffer = new Uint8Array(exported);
-	const base64Key = btoa(String.fromCharCode(...exportedKeyBuffer));
-	return base64Key;
+export async function exportECDSAPublicKey(key) {
+    const exported = await crypto.subtle.exportKey("spki", key);
+    return btoa(String.fromCharCode(...new Uint8Array(exported)));
 }
+
+export async function exportECDSAPrivateKey(key) {
+    const exported = await crypto.subtle.exportKey("pkcs8", key);
+    return btoa(String.fromCharCode(...new Uint8Array(exported)));
+}
+
+export async function importECDSAPublicKey(base64) {
+    const bin = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+
+    return crypto.subtle.importKey(
+        "spki",
+        bin,
+        {
+            name: "ECDSA",
+            namedCurve: "P-256",
+        },
+        true,
+        ["verify"]
+    );
+}
+
+export async function importECDSAPrivateKey(base64) {
+    const bin = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+
+    return crypto.subtle.importKey(
+        "pkcs8",
+        bin,
+        {
+            name: "ECDSA",
+            namedCurve: "P-256",
+        },
+        true,
+        ["sign"]
+    );
+}
+
 
 // Step 4: Derive shared secret from ECDH public and private keys
 export async function deriveSharedSecret(privateKey, publicKey) {

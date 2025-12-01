@@ -10,5 +10,7 @@
 - [ ] Make the client PWA
 - [ ] display stats such as bandwidth, bitrate, quality if possible
 - [ ] The camera indicator is still on after peer disconnects. Properly release resources.
-- [ ] Login Page UI
+- [ ] Login Page UI improvement. Account creation
 - [ ] don't show Public key in navbar but rather in profile
+- [ ] Why use url in avatar in HomePage:58
+

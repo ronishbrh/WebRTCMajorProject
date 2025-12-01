@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 import Navbar from "../components/Navbar.jsx";
 import { useUser } from "../utils/UserContext";
-import { exportKey } from "../utils/crypto";
+import { exportECDSAPublicKey } from "../utils/crypto";
 
 
 import profileIcon from "../assets/userProfileGeneric.png";
@@ -22,7 +22,7 @@ export default function ProfilePage() {
             navigate("/");
         } else {
             const loadKey = async () => {
-                const keyText = await exportKey(identity.publicKey);
+                const keyText = await exportECDSAPublicKey(identity.publicKey);
                 setPubKey(keyText);
             };
 
@@ -33,7 +33,7 @@ export default function ProfilePage() {
     return (
         <div className="w-full min-h-screen flex flex-col">
             <Navbar
-                onHomeClick={() => navigate("/home")}
+                onHomeClick={() => navigate("/")}
                 onContactClick={() => navigate("/contact")}
             />
 

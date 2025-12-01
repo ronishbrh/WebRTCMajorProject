@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useUser } from "../utils/UserContext";
-import { arrayBufferToBase64, base64ToArrayBuffer, decryptAES, deriveSharedSecret, encryptAES, generateECDHKeys, importAESKey, signChallenge, verifyChallenge } from "../utils/crypto";
+import { arrayBufferToBase64, base64ToArrayBuffer, decryptAES, deriveSharedSecret, encryptAES, exportECDSAPublicKey, generateECDHKeys, importAESKey, signChallenge, verifyChallenge } from "../utils/crypto";
 
 // Resolution presets
 const RESOLUTIONS = {
@@ -11,9 +11,10 @@ const RESOLUTIONS = {
 };
 
 export default function CallPage() {
+	const { state: contact } = useLocation();
+
 	const localVideoRef = useRef(null);
 	const remoteVideoRef = useRef(null);
-
 
 	const [localStream, setLocalStream] = useState(null);
 	const [remoteStream, setRemoteStream] = useState(null);
@@ -35,9 +36,6 @@ export default function CallPage() {
 	const navigate = useNavigate();
 	const { identity } = useUser();
 
-	if (!identity) {
-		navigate("/login");
-	}
 
 	// --------- PURE FUNCTION (no setState allowed here) ------
 	const requestMediaStream = async (resolutionKey) => {
@@ -65,18 +63,127 @@ export default function CallPage() {
 
 		const pc = pcRef.current;
 
-		if (message.type === "offer") {
+		if (message.type === "join" && !pc.currentRemoteDescription && wsRef.current.readyState === 1) {
+			// Only create offer if we don't have remote description yet
+
+			const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
+
+			const signature = await signChallenge(identity.privateKey, rawPubKey);
+			const msg = {
+				type: "challenge1",
+				publicKey: arrayBufferToBase64(rawPubKey),
+				signature: arrayBufferToBase64(signature),
+				// userID needed
+			};
+
+			wsRef.current.send(
+				JSON.stringify(msg)
+			);
+			console.log("Challenge1 sent");
+
+		} else if (message.type === "challenge1") {
+			const rawECDH = base64ToArrayBuffer(message.publicKey);
+			const signature = base64ToArrayBuffer(message.signature);
+
+			const valid = await verifyChallenge(contact.publicKey, rawECDH, signature);
+
+
+			if (valid) {
+				console.log("User verified");
+
+				const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
+
+				const signature = await signChallenge(identity.privateKey, rawPubKey);
+				const msg = {
+					type: "challenge2",
+					publicKey: arrayBufferToBase64(rawPubKey),
+					signature: arrayBufferToBase64(signature),
+					// userID needed
+				};
+
+				wsRef.current.send(
+					JSON.stringify(msg)
+				);
+
+				const publicKey = await crypto.subtle.importKey(
+					"raw",                     // you exported it as raw
+					rawECDH,    // ArrayBuffer or Uint8Array.buffer
+					{
+						name: "ECDH",
+						namedCurve: "P-256",     // MUST match original curve
+					},
+					true,                      // extractable
+					[]                         // ECDH public keys have no usages
+				);
+
+				const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
+				const aesKey = await importAESKey(sharedSecret);
+				AESKey.current = aesKey;
+				console.log("Challenge2 sent");
+			} else {
+				console.log("User Unverified");
+			}
+
+		} else if (message.type === "challenge2") {
+			const rawECDH = base64ToArrayBuffer(message.publicKey);
+			const signature = base64ToArrayBuffer(message.signature);
+
+			const valid = await verifyChallenge(contact.publicKey, rawECDH, signature);
+
+			if (valid) {
+				console.log("User verified");
+
+				const publicKey = await crypto.subtle.importKey(
+					"raw",                     // you exported it as raw
+					rawECDH,    // ArrayBuffer or Uint8Array.buffer
+					{
+						name: "ECDH",
+						namedCurve: "P-256",     // MUST match original curve
+					},
+					true,                      // extractable
+					[]                         // ECDH public keys have no usages
+				);
+
+				const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
+				const aesKey = await importAESKey(sharedSecret);
+				AESKey.current = aesKey;
+
+				const offer = await pc.createOffer();
+				await pc.setLocalDescription(offer);
+
+				const encoder = new TextEncoder();
+				const sdpBuffer = encoder.encode(offer.sdp);
+
+				// Generate random IV (12 bytes)
+				const { iv, encrypted: encryptedSDPBuffer } = await encryptAES(sdpBuffer, aesKey);
+
+				const message = {
+					type: "offer",
+					offer: arrayBufferToBase64(encryptedSDPBuffer),
+					iv: arrayBufferToBase64(iv),
+					// userID needed
+				};
+
+				wsRef.current.send(
+					JSON.stringify(message)
+				);
+				console.log("Offer sent");
+			} else {
+				console.log("User Unverified");
+			}
+
+		} else if (message.type === "offer") {
 			console.log("Received offer");
 
 			const iv = base64ToArrayBuffer(message.iv);
 			const encryptedSDPBuffer = base64ToArrayBuffer(message.offer);
 
-			const SDPBuffer = decryptAES(encryptedSDPBuffer, AESKey.current, iv);
+			const SDPBuffer = await decryptAES(encryptedSDPBuffer, AESKey.current, iv);
 
 			const decoder = new TextDecoder();
 			const sdp = decoder.decode(SDPBuffer);
 
-			await pc.setRemoteDescription({type: "offer", sdp});
+			await pc.setRemoteDescription({ type: "offer", sdp });
 
 			// Add queued ICE candidates
 			for (const c of pendingCandidates.current) {
@@ -92,12 +199,33 @@ export default function CallPage() {
 			const answer = await pc.createAnswer();
 			await pc.setLocalDescription(answer);
 
+			const encoder = new TextEncoder();
+			const ansSdpBuffer = encoder.encode(answer.sdp);
+
+			const { iv: ansiv, encrypted: encryptedAnsSDPBuffer } = await encryptAES(ansSdpBuffer, AESKey.current);
+
+			const msg = {
+				type: "answer",
+				answer: arrayBufferToBase64(encryptedAnsSDPBuffer),
+				iv: arrayBufferToBase64(ansiv),
+				// userID needed
+			};
+
 			wsRef.current.send(
-				JSON.stringify({ type: "answer", answer })
+				JSON.stringify(msg)
 			);
+
 		} else if (message.type === "answer") {
 			console.log("Received answer");
-			await pc.setRemoteDescription(new RTCSessionDescription(message.answer));
+			const iv = base64ToArrayBuffer(message.iv);
+			const encryptedSDPBuffer = base64ToArrayBuffer(message.answer);
+
+			const SDPBuffer = await decryptAES(encryptedSDPBuffer, AESKey.current, iv);
+
+			const decoder = new TextDecoder();
+			const sdp = decoder.decode(SDPBuffer);
+
+			await pc.setRemoteDescription({ type: "answer", sdp });
 
 			// Add queued ICE candidates
 			for (const c of pendingCandidates.current) {
@@ -110,151 +238,64 @@ export default function CallPage() {
 			pendingCandidates.current = [];
 
 		} else if (message.type === "ice") {
-			const candidate = new RTCIceCandidate(message.candidate);
+			const iv = base64ToArrayBuffer(message.iv);
+			const encryptedCandidateBuffer = base64ToArrayBuffer(message.candidate);
 
-			// Queue ICE candidates if remote description isn't set yet
+			const candidateBuffer = await decryptAES(
+				encryptedCandidateBuffer,
+				AESKey.current,
+				iv
+			);
+
+			const decoder = new TextDecoder();
+			const decodedString = decoder.decode(candidateBuffer);
+
+			const candidateObj = JSON.parse(decodedString);
+
+			const candidate = new RTCIceCandidate(candidateObj);
+
 			if (!pc.currentRemoteDescription) {
+				//console.log("Pushed");
 				pendingCandidates.current.push(candidate);
 			} else {
 				try {
 					await pc.addIceCandidate(candidate);
+					//console.log("Flushed");
 				} catch (e) {
-					console.error("Eror adding ICE candidate", e);
+					console.error("Error adding ICE candidate", e);
 				}
 			}
 
-		} else // Optional: Automatically create offer if second peer connects
-			if (message.type === "join" && !pc.currentRemoteDescription && wsRef.current.readyState === 1) {
-				// Only create offer if we don't have remote description yet
+		} else if (message.type === "end-call") {
+			console.log("Remote user ended call");
 
-				const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.publicKey);
-
-				const signature = await signChallenge(identity.privateKey, rawPubKey);
-				const message = {
-					type: "challenge1",
-					publicKey: arrayBufferToBase64(rawPubKey),
-					signature: arrayBufferToBase64(signature),
-					// userID needed
-				};
-
-				wsRef.current.send(
-					JSON.stringify(message)
-				);
-
-			} else if (message.type === "challenge1") {
-				const rawECDH = base64ToArrayBuffer(received.publicKey);
-				const signature = base64ToArrayBuffer(received.signature);
-
-				const valid = await verifyChallenge(identity.publicKey, rawECDH, signature);
-
-				if (valid) {
-					console.log("User verified");
-
-					const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.publicKey);
-
-					const signature = await signChallenge(identity.privateKey, rawPubKey);
-					const message = {
-						type: "challenge2",
-						publicKey: arrayBufferToBase64(rawPubKey),
-						signature: arrayBufferToBase64(signature),
-						// userID needed
-					};
-
-					wsRef.current.send(
-						JSON.stringify(message)
-					);
-
-					const publicKey = await crypto.subtle.importKey(
-						"raw",                     // you exported it as raw
-						rawECDH,    // ArrayBuffer or Uint8Array.buffer
-						{
-							name: "ECDH",
-							namedCurve: "P-256",     // MUST match original curve
-						},
-						true,                      // extractable
-						[]                         // ECDH public keys have no usages
-					);
-
-					const sharedSecret = await deriveSharedSecret(identity.privateKey, publicKey);
-					const aesKey = await importAESKey(sharedSecret);
-					AESKey.current = aesKey;
-				} else {
-					console.log("User Unverified");
+			setShowEndCallNotification(true);
+			setTimeout(() => {
+				if (localStream) {
+					localStream.getTracks().forEach(track => track.stop());
 				}
 
-			} else if (message.type === "challeng2") {
-				const rawECDH = base64ToArrayBuffer(received.publicKey);
-				const signature = base64ToArrayBuffer(received.signature);
+				if (pcRef.current)
+					pcRef.current.close();
 
-				const valid = await verifyChallenge(identity.publicKey, rawECDH, signature);
+				if (wsRef.current)
+					wsRef.current.close();
 
-				if (valid) {
-					console.log("User verified");
-
-					const publicKey = await crypto.subtle.importKey(
-						"raw",                     // you exported it as raw
-						rawECDH,    // ArrayBuffer or Uint8Array.buffer
-						{
-							name: "ECDH",
-							namedCurve: "P-256",     // MUST match original curve
-						},
-						true,                      // extractable
-						[]                         // ECDH public keys have no usages
-					);
-
-					const sharedSecret = await deriveSharedSecret(identity.privateKey, publicKey);
-					const aesKey = await importAESKey(sharedSecret);
-					AESKey.current = aesKey;
-
-					const offer = await pc.createOffer();
-					await pc.setLocalDescription(offer);
-
-					const encoder = new TextEncoder();
-					const sdpBuffer = encoder.encode(offer.sdp);
-
-					// Generate random IV (12 bytes)
-					const { iv, encrypted: encryptedSDPBuffer } = await encryptAES(sdpBuffer, aesKey);
-
-					const message = {
-						type: "offer",
-						offer: arrayBufferToBase64(encryptedSDPBuffer),
-						iv: arrayBufferToBase64(iv),
-						// userID needed
-					};
-
-					wsRef.current.send(
-						JSON.stringify(message)
-					);
-				} else {
-					console.log("User Unverified");
-				}
-
-			} else if (message.type === "end-call") {
-				console.log("Remote user ended call");
-
-				setShowEndCallNotification(true);
-				setTimeout(() => {
-					if (localStream) {
-						localStream.getTracks().forEach(track => track.stop());
-					}
-
-					if (pcRef.current)
-						pcRef.current.close();
-
-					if (wsRef.current)
-						wsRef.current.close();
-
-					navigate("/");
-					return;
-				}, 3000);
-				return;
-			}
+				navigate("/");
+			}, 3000);
+			return;
+		}
 	};
 
 
 	// --------- INITIAL STARTUP ---------
 	useEffect(() => {
 		let active = true;
+
+		if (!identity || !contact) {
+			console.error("Identity or contact isn't set");
+			navigate("/login");
+		}
 
 		const init = async () => {
 			const { stream, error } = await requestMediaStream("medium");
@@ -314,11 +355,21 @@ export default function CallPage() {
 			ws.onmessage = (msg) => handleSignalingMessage(msg.data);
 
 			// Send ICE candidates to remote peer
-			pc.onicecandidate = (event) => {
+			pc.onicecandidate = async (event) => {
 				if (event.candidate && ws.readyState === 1) {
-					ws.send(
-						JSON.stringify({ type: "ice", candidate: event.candidate })
-					);
+					if (!AESKey.current) console.error("AESKey not set");
+
+					const encoder = new TextEncoder();
+					const candidateString = JSON.stringify(event.candidate);
+					const candidateBuffer = encoder.encode(candidateString);
+
+					const { iv, encrypted: encryptedCandidateBuffer } = await encryptAES(candidateBuffer, AESKey.current);
+
+					ws.send(JSON.stringify({
+						type: "ice",
+						candidate: arrayBufferToBase64(encryptedCandidateBuffer),
+						iv: arrayBufferToBase64(iv)
+					}));
 				}
 			};
 
@@ -342,6 +393,8 @@ export default function CallPage() {
 				wsRef.current.close();
 				wsRef.current = null;
 			}
+
+			console.log("This ran");
 
 		};
 	}, []);
@@ -424,7 +477,7 @@ export default function CallPage() {
 
 		if (wsRef.current)
 			wsRef.current.close();
-		navigate("/home");
+		navigate("/");
 	};
 
 	return (

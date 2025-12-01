@@ -16,15 +16,16 @@ export default function App() {
 	const handleUnlocked = (identity) => {
 
 		setIdentity(identity);
-		navigate('/home');
+		navigate('/');
 	}
 
 	return (
 		<div className="min-h-screen bg-gray-100 text-gray-900">
 			<Routes>
-				<Route path="/" element={<LoginPage onUnlocked={handleUnlocked} />} />
 
-				<Route path="/home" element={<HomePage />} />
+				<Route path="/" element={<HomePage />} />
+
+				<Route path="/login" element={<LoginPage onUnlocked={handleUnlocked} />} />
 
 				<Route path="/call/:userName" element={<CallPage />} />
 

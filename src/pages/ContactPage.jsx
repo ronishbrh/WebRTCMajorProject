@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar.jsx';
 import { useUser } from '../utils/UserContext';
 import { IdentityManager } from '../utils/IdentityManager.js';
+import { importECDSAPublicKey } from "../utils/crypto.js";
 
 export default function ContactPage() {
     const navigate = useNavigate();
@@ -24,7 +25,7 @@ export default function ContactPage() {
 
         try {
 
-            const existingContacts = await identityManager.getContacts(identity.userName) || [];
+            const existingContacts = identity.contacts;
 
             // Check if contact already exists
             const duplicate = existingContacts.find(c => c.publicKey === publicKey);
@@ -33,7 +34,7 @@ export default function ContactPage() {
                 return;
             }
 
-            const contact = { userName, publicKey, signalingServerURL: signalingURL };
+            const contact = { userName, publicKey: await importECDSAPublicKey(publicKey), signalingServerURL: signalingURL };
             await identityManager.addContact(identity.userName, contact);
 
             setMessage("Contact added successfully");
@@ -47,9 +48,16 @@ export default function ContactPage() {
         }
     };
 
+	useEffect(() => {
+		if (!identity) {
+			navigate("/login");
+			return;
+		}
+	}, [identity, navigate]);
+
     return (
         <div className="w-full min-h-screen flex flex-col">
-            <Navbar onHomeClick={() => navigate("/home")} onProfileClick={() => navigate("/profile")} />
+            <Navbar onHomeClick={() => navigate("/")} onProfileClick={() => navigate("/profile")} />
 
             <main className="p-4 sm:p-6 flex-1 max-w-md mx-auto">
                 <h2 className="text-2xl font-semibold mb-4">Add New Contact</h2>

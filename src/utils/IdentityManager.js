@@ -119,7 +119,7 @@ export class IdentityManager {
 			["sign"]
 		);
 
-		return { userName: userName, privateKey, publicKey: record.publicKey, aesKey };
+		return { userName: userName, privateKey, publicKey: record.publicKey, aesKey, contacts: record.contacts};
 	}
 
 	// ---------------- Store encrypted user data ----------------
