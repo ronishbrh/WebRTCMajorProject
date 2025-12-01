@@ -14,7 +14,7 @@ export default function Login({ onUnlocked }) {
 			onUnlocked(identity); // parent component gets private key + AES key
 		} catch (err) {
 			const identity = await identityManager.createUser(userName, password);
-			setError("Invalid credentials or user not found. New User created.");
+			setError("Invalid credentials or user not found. New User created." + err);
 		}
 	};
 
@@ -28,7 +28,7 @@ export default function Login({ onUnlocked }) {
 			>
 				<input value={userName} onChange={e => setUserName(e.target.value)} placeholder="User ID" />
 				<input value={password} onChange={e => setPassword(e.target.value)} type="password" placeholder="Password" />
-				<button onClick={handleLogin}>Unlock</button>
+				<button>Unlock</button>
 				{error && <div style={{ color: "red" }}>{error}</div>}
 			</form >
 		</div>

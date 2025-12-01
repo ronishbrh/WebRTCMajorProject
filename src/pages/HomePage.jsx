@@ -13,14 +13,10 @@ const CONNECTIONS = [
 export default function HomePage() {
 	const navigate = useNavigate();
 
-	const [pubKey, setPubKey] = useState("");
-
 	const { identity } = useUser();
 
 	useEffect(() => {
-		if (!identity) navigate("/"); else {
-			setPubKey(exportKey(identity.publicKey));
-		}
+		if (!identity) navigate("/");
 	});
 
 	const handleCall = (userName) => {

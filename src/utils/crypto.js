@@ -50,7 +50,7 @@ export async function encryptAES(data, aesKey) {
 			iv: iv, // Initialization Vector
 		},
 		aesKey, // AES Key
-		new TextEncoder().encode(data) // Data to encrypt
+		data
 	);
 	return { iv, encrypted };
 }
@@ -66,9 +66,51 @@ export async function decryptAES(encryptedData, aesKey, iv) {
 			aesKey,
 			encryptedData
 		);
-		const decoder = new TextDecoder();
-		return decoder.decode(decrypted);
+		return decrypted;
 	} catch (e) {
 		console.error("Decryption failed", e);
 	}
+}
+
+// Step 3: Sign the nonce with ECDSA to authenticate the user
+export async function signChallenge(privateKey, challenge) {
+	const encoder = new TextEncoder();
+	const signature = await crypto.subtle.sign(
+		{
+			name: "ECDSA",
+			hash: "SHA-256",
+		},
+		privateKey,
+		challenge
+	);
+	return signature;
+}
+
+export async function verifyChallenge(publicKey, challenge, signature) {
+	const encoder = new TextEncoder();
+
+	const isValid = await crypto.subtle.verify(
+		{
+			name: "ECDSA",
+			hash: "SHA-256",
+		},
+		publicKey,
+		signature,
+		challenge
+	);
+
+	return isValid; // true or false
+}
+
+export function arrayBufferToBase64(buffer) {
+  return btoa(String.fromCharCode(...new Uint8Array(buffer)));
+}
+
+export function base64ToArrayBuffer(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
 }
