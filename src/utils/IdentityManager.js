@@ -102,7 +102,7 @@ export class IdentityManager {
 		const record = await this._getObject("keys", userName);
 		if (!record) throw new Error("User not found");
 
-		if (userName == record.userName) {
+		if (userName != record.userName) {
 			console.error("userName doesn't match the userName stored in value");
 		}
 

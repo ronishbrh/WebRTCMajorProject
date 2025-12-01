@@ -140,7 +140,7 @@ export default function CallPage() {
 				if(wsRef.current)
 					wsRef.current.close();
 
-				navigate("/");
+				navigate("/home");
 				return;
 			}, 3000);
 			return;
@@ -320,7 +320,7 @@ export default function CallPage() {
 
 		if (wsRef.current)
 			wsRef.current.close();
-		navigate("/");
+		navigate("/home");
 	};
 
 	return (
