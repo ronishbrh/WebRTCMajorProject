@@ -13,7 +13,9 @@ export default function Login({ onUnlocked }) {
 			const identity = await identityManager.unlockUser(userName, password);
 			onUnlocked(identity); // parent component gets private key + AES key
 		} catch (err) {
+			console.log(err);
 			const identity = await identityManager.createUser(userName, password);
+			console.log(identity)
 			setError("Invalid credentials or user not found. New User created.");
 		}
 	};
