@@ -354,6 +354,11 @@ export default function CallPage() {
 			ws.onopen = () => console.log("Connected to signaling server");
 			ws.onmessage = (msg) => handleSignalingMessage(msg.data);
 
+			//const msg = {
+			//	from: {userName, publicKey: identity.publicKey},
+			//	to: {userName: contact.userName, publicKey: contact.publicKey}
+			//};
+
 			// Send ICE candidates to remote peer
 			pc.onicecandidate = async (event) => {
 				if (event.candidate && ws.readyState === 1) {

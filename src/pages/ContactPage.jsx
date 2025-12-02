@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar.jsx';
 import { useUser } from '../utils/UserContext';
@@ -36,6 +36,7 @@ export default function ContactPage() {
 
             const contact = { userName, publicKey: await importECDSAPublicKey(publicKey), signalingServerURL: signalingURL };
             await identityManager.addContact(identity.userName, contact);
+			identity.contacts.push(contact);
 
             setMessage("Contact added successfully");
             setUserName("");

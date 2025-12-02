@@ -23,6 +23,7 @@ export default function Login({ onUnlocked }) {
 		} catch (err) {
 			console.log(err);
 			const identity = await identityManager.createUser(userName, password);
+			await identityManager.addContact(userName, {userName, publicKey: identity.publicKey, signalingServerURL: ""});
 			setError("Invalid credentials or user not found. New User created.");
 		}
 	};
