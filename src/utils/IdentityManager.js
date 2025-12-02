@@ -91,6 +91,7 @@ export class IdentityManager {
 			encryptedPrivateKey,
 			salt: Array.from(salt),
 			publicKey: keyPair.publicKey,
+			contacts: [],
 		});
 
 		console.log("User created");
@@ -101,7 +102,6 @@ export class IdentityManager {
 	async unlockUser(userName, password) {
 		const record = await this._getObject("keys", userName);
 		if (!record) throw new Error("User not found");
-		console.log("Found User");
 
 		if (userName != record.userName) {
 			console.error("userName doesn't match the userName stored in value \t", + userName + "\t" + record.userName);
