@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useUser } from "../utils/UserContext";
-import { arrayBufferToBase64, base64ToArrayBuffer, decryptAES, deriveSharedSecret, encryptAES, exportECDSAPublicKey, generateECDHKeys, importAESKey, signChallenge, verifyChallenge } from "../utils/crypto";
+import { arrayBufferToBase64, base64ToArrayBuffer, decryptAES, deriveSharedSecret, encryptAES, generateECDHKeys, importAESKey, signChallenge, verifyChallenge } from "../utils/crypto";
+import ConnectionTester from "../utils/ConnectionTester";
 
 // Resolution presets
 const RESOLUTIONS = {
@@ -57,6 +58,7 @@ export default function CallPage() {
 			return { stream: null, error: "Unable to access camera/microphone. Please grant permissions and refresh." };
 		}
 	};
+
 
 	const handleSignalingMessage = async (data) => {
 		const message = JSON.parse(data);
@@ -358,6 +360,20 @@ export default function CallPage() {
 			//	from: {userName, publicKey: identity.publicKey},
 			//	to: {userName: contact.userName, publicKey: contact.publicKey}
 			//};
+
+			pc.oniceconnectionstatechange = () => {
+				if (pc.iceConnectionState === "connected") {
+					console.log("Call connected — starting connection test...");
+
+					setTimeout(async () => {
+						const tester = new ConnectionTester(pc);
+						const metrics = await tester.startTest(5000);
+						console.log("Connection metrics:", metrics);
+						tester.downloadCSV();
+					}, 3000); // wait 3 seconds for stats to populate
+				}
+			};
+
 
 			// Send ICE candidates to remote peer
 			pc.onicecandidate = async (event) => {
