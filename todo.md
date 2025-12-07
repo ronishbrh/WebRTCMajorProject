@@ -1,21 +1,23 @@
-- [ ] List supported resolition. afaile arbitrary resolution set garne milne hoki number of supported resolution ho.
 - [ ] List input video sources. mobile ma fron and back camera ko laagi
+- [ ] QR
+- [ ] Handle renegotiation, retry call
+- [ ] Make the client PWA
+- [ ] The camera indicator is still on after peer disconnects. Properly release resources. Camera is still on the peer who didn't hangup the call first
+- [ ] UI improvement kun page ma xau tyo page ko button highlight
+- [ ] Why use url in avatar in HomePage:58? OR Use the first letter of the userName as capital and show it in avatar
+- [ ] use https and wss between server and client
+
+# Before Presentation
+- [ ] List supported resolition. afaile arbitrary resolution set garne milne hoki number of supported resolution ho.
 - [ ] Call aayo vanne indicator or page
 - [ ] Able to call a specific user.
 - [x] Generate ECDSA key pair
 - [x] store ECDSA key pair locally
 - [x] Store other user's contact detail
 - [x] Ability to add peaple(contacts). a page or form to enter other peoples key pair.
-- [ ] QR
 - [x] Secure the signaling process. Encrypt/decrypt offer and ice candidates between peers.
-- [ ] Handle renegotiation, retry call
-- [ ] Make the client PWA
 - [ ] display stats such as bandwidth, bitrate, quality if possible
-- [ ] The camera indicator is still on after peer disconnects. Properly release resources. Camera is still on the peer who didn't hangup the call first
 - [ ] Login Page UI improvement. Account creation
 - [x] don't show Public key in navbar but rather in profile
-- [ ] Why use url in avatar in HomePage:58? OR Use the first letter of the userName as capital and show it in avatar
 - [ ] After changing our name in the profile page update the DB key and value
-- [ ] UI improvement kun page ma xau tyo page ko button highlight
 - [ ] Multiple device bich call test garne within a LAN.
-- [ ] use https and wss between server and client
