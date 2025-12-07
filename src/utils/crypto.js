@@ -108,7 +108,7 @@ export async function decryptAES(encryptedData, aesKey, iv) {
 
 // Step 3: Sign the nonce with ECDSA to authenticate the user
 export async function signChallenge(privateKey, challenge) {
-	const encoder = new TextEncoder();
+	//const encoder = new TextEncoder();
 	const signature = await crypto.subtle.sign(
 		{
 			name: "ECDSA",
@@ -121,7 +121,7 @@ export async function signChallenge(privateKey, challenge) {
 }
 
 export async function verifyChallenge(publicKey, challenge, signature) {
-	const encoder = new TextEncoder();
+	//const encoder = new TextEncoder();
 
 	const isValid = await crypto.subtle.verify(
 		{

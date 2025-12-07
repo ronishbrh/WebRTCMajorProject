@@ -1,7 +1,7 @@
 import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar.jsx";
 import UserCard from "../components/UserCard";
-import { useNavigate } from "react-router-dom";
 import { useUser } from "../utils/UserContext";
 
 export default function HomePage() {
