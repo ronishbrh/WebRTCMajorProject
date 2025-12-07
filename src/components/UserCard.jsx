@@ -1,10 +1,14 @@
+import { useState } from "react";
+import { FiTrash2 } from "react-icons/fi";
+import { ConfirmDialog } from "./ConfirmDialog";
 
+export default function UserCard({ user, onClick, onCall, onDelete }) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
-export default function UserCard({ user, onClick, onCall }) {
   return (
     <div
       onClick={onClick}
-      className="flex items-center justify-between bg-white p-3 sm:p-4 rounded-xl shadow hover:shadow-md transition cursor-pointer"
+      className="relative flex items-center justify-between bg-white p-3 sm:p-4 rounded-xl shadow hover:shadow-md transition cursor-pointer"
     >
       <div className="flex items-center gap-4">
         <img
@@ -18,16 +22,45 @@ export default function UserCard({ user, onClick, onCall }) {
         </div>
       </div>
 
-      <button
-        onClick={(e) => {
-          e.stopPropagation(); // prevent outer onClick
-          onCall();
-        }}
-        aria-label={`call-user-${user.id}`}
-        className="p-3 rounded-full bg-green-500 hover:bg-green-600 text-white transition"
-      >
-        📞
-      </button>
+      <div className="flex gap-2 relative">
+        {/* Delete button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setConfirmOpen(true);
+          }}
+          aria-label={`delete-user-${user.id}`}
+          className="p-3 rounded-full bg-red-500 hover:bg-red-600 text-white transition"
+        >
+          <FiTrash2 size={18} />
+        </button>
+
+        {/* Inline ConfirmDialog */}
+        {confirmOpen && (
+          <ConfirmDialog
+            open={confirmOpen}
+            title="Confirm Delete"
+            message={`Are you sure you want to delete ${user.name}?`}
+            onConfirm={async () => {
+              await onDelete(); // HomePage callback
+              setConfirmOpen(false);
+            }}
+            onCancel={() => setConfirmOpen(false)}
+          />
+        )}
+
+        {/* Call button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onCall();
+          }}
+          aria-label={`call-user-${user.id}`}
+          className="p-3 rounded-full bg-green-500 hover:bg-green-600 text-white transition"
+        >
+          📞
+        </button>
+      </div>
     </div>
   );
 }

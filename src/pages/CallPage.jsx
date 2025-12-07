@@ -17,8 +17,9 @@ export default function CallPage() {
 	const localVideoRef = useRef(null);
 	const remoteVideoRef = useRef(null);
 
-	const [localStream, setLocalStream] = useState(null);
-	const [remoteStream, setRemoteStream] = useState(null);
+	const localStreamRef = useRef(null);
+	const remoteStreamRef = useRef(null);
+
 	const [isVideoOn, setIsVideoOn] = useState(true);
 	const [isAudioOn, setIsAudioOn] = useState(true);
 	const [error, setError] = useState(null);
@@ -26,6 +27,10 @@ export default function CallPage() {
 
 	const [showSettings, setShowSettings] = useState(false);
 	const [resolution, setResolution] = useState("medium");
+
+	const [liveStats, setLiveStats] = useState({
+		downloadBitrate: 0, uploadBitrate: 0, jitter: 0, packetsLost: 0
+	})
 
 	const pcRef = useRef(null);
 	const wsRef = useRef(null);
@@ -56,6 +61,27 @@ export default function CallPage() {
 		} catch (err) {
 			console.error("Media Device Error:", err);
 			return { stream: null, error: "Unable to access camera/microphone. Please grant permissions and refresh." };
+		}
+	};
+
+
+	const cleanupMedia = () => {
+		if (localStreamRef.current) {
+			localStreamRef.current.getTracks().forEach(t => t.stop());
+			localStreamRef.current = null;
+		}
+		if (remoteStreamRef.current) {
+			remoteStreamRef.current.getTracks().forEach(t => t.stop());
+			remoteStreamRef.current = null;
+		}
+		if (pcRef.current) {
+			if (pcRef.current._tester) pcRef.current._tester.stop();
+			pcRef.current.close();
+			pcRef.current = null;
+		}
+		if (wsRef.current && wsRef.current.readyState === 1) {
+			wsRef.current.close();
+			wsRef.current = null;
 		}
 	};
 
@@ -273,21 +299,15 @@ export default function CallPage() {
 
 			setShowEndCallNotification(true);
 			setTimeout(() => {
-				if (localStream) {
-					localStream.getTracks().forEach(track => track.stop());
-				}
-
-				if (pcRef.current)
-					pcRef.current.close();
-
-				if (wsRef.current)
-					wsRef.current.close();
+				cleanupMedia();
 
 				navigate("/");
 			}, 3000);
 			return;
 		}
 	};
+
+
 
 
 	// --------- INITIAL STARTUP ---------
@@ -309,12 +329,8 @@ export default function CallPage() {
 				return;
 			}
 
-			// Stop existing stream safely
-			if (localStream) {
-				localStream.getTracks().forEach(t => t.stop());
-			}
 
-			setLocalStream(stream);
+			localStreamRef.current = stream;
 			setError(null);
 
 			// Attach to video element
@@ -337,7 +353,8 @@ export default function CallPage() {
 			pc.ontrack = (event) => {
 				const stream = event.streams[0];
 				remoteVideoRef.current.srcObject = stream;
-				setRemoteStream(stream);
+				remoteStreamRef.current = stream;
+
 			};
 
 			//pc.onicecandidate = (event) => {
@@ -365,12 +382,16 @@ export default function CallPage() {
 				if (pc.iceConnectionState === "connected") {
 					console.log("Call connected — starting connection test...");
 
-					setTimeout(async () => {
-						const tester = new ConnectionTester(pc);
-						const metrics = await tester.startTest(5000);
-						console.log("Connection metrics:", metrics);
-						tester.downloadCSV();
-					}, 3000); // wait 3 seconds for stats to populate
+					const tester = new ConnectionTester(pc, (stats) => {
+						setLiveStats({
+							downloadBitrate: Math.round(stats.downloadBitrate || 0),
+							uploadBitrate: Math.round(stats.uploadBitrate || 0),
+							jitter: stats.jitter?.toFixed(3),
+							packetsLost: stats.packetsLost
+						})
+					})
+					tester.start(1000);
+					pcRef.current._tester = tester;
 				}
 			};
 
@@ -401,9 +422,7 @@ export default function CallPage() {
 		return () => {
 			active = false;
 
-			if (localStream) {
-				localStream.getTracks().forEach(t => t.stop());
-			}
+
 
 			if (pcRef.current) {
 				pcRef.current.close();
@@ -414,6 +433,9 @@ export default function CallPage() {
 				wsRef.current.close();
 				wsRef.current = null;
 			}
+
+			if (pcRef.current?._tester)
+				pcRef.current._tester.stop();
 
 			console.log("This ran");
 
@@ -426,7 +448,7 @@ export default function CallPage() {
 	const handleResolutionChange = async (newRes) => {
 		setResolution(newRes);
 
-		const { stream, error } = await requestMediaStream(newRes);
+		const { stream: newStream, error } = await requestMediaStream(newRes);
 
 		if (error) {
 			setError(error);
@@ -434,38 +456,48 @@ export default function CallPage() {
 		}
 
 		const pc = pcRef.current;
-		if (pc) {
-			const videoTrack = stream.getVideoTracks()[0];
-			const audioTrack = stream.getAudioTracks()[0];
+		if (pc && localStreamRef.current) {
+			const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
+			const newVideoTrack = newStream.getVideoTracks()[0];
 
-			const videoSender = pc.getSenders().find(sender => sender.track && sender.track.kind === 'video');
-			if (videoSender && videoTrack)
-				await videoSender.replaceTrack(videoTrack);
+			// Replace track in PeerConnection
+			const videoSender = pc.getSenders().find(sender => sender.track?.kind === 'video');
+			if (videoSender && newVideoTrack) {
+				await videoSender.replaceTrack(newVideoTrack);
+			}
 
-			const audioSender = pc.getSenders().find(sender => sender.track && sender.track.kind == 'audio');
-			if (audioSender & audioTrack)
-				await audioSender.replaceTrack(audioTrack);
+			// Replace track in local preview
+			const localVideoTracks = localVideoRef.current.srcObject.getTracks();
+			const updatedTracks = localVideoTracks.filter(t => t.kind !== 'video').concat(newVideoTrack);
+			localVideoRef.current.srcObject = new MediaStream(updatedTracks);
+
+			// Stop old video track
+			oldVideoTrack.stop();
+
+			// Keep audio from old stream
+			const oldAudioTrack = localStreamRef.current.getAudioTracks()[0];
+			const combinedStream = new MediaStream([newVideoTrack, oldAudioTrack]);
+
+			localStreamRef.current = combinedStream;
+		} else {
+			// Fallback if no previous stream
+			localStreamRef.current = newStream;
+			if (localVideoRef.current) localVideoRef.current.srcObject = newStream;
+
+			if (pc) {
+				newStream.getTracks().forEach(track => pc.addTrack(track, newStream));
+			}
 		}
 
-
-		// stop old stream
-		if (localStream) {
-			localStream.getTracks().forEach(t => t.stop());
-		}
-
-		setLocalStream(stream);
 		setShowSettings(false);
-
-		if (localVideoRef.current) {
-			localVideoRef.current.srcObject = stream;
-		}
 	};
+
 
 	// ----------- TOGGLE VIDEO ----------
 	const toggleVideo = () => {
-		if (!localStream) return;
+		if (!localStreamRef.current) return;
 
-		const track = localStream.getVideoTracks()[0];
+		const track = localStreamRef.current.getVideoTracks()[0];
 		if (track) {
 			track.enabled = !track.enabled;
 			setIsVideoOn(track.enabled);
@@ -474,9 +506,9 @@ export default function CallPage() {
 
 	// ----------- TOGGLE AUDIO ----------
 	const toggleAudio = () => {
-		if (!localStream) return;
+		if (!localStreamRef.current) return;
 
-		const track = localStream.getAudioTracks()[0];
+		const track = localStreamRef.current.getAudioTracks()[0];
 		if (track) {
 			track.enabled = !track.enabled;
 			setIsAudioOn(track.enabled);
@@ -489,8 +521,8 @@ export default function CallPage() {
 			wsRef.current.send(JSON.stringify({ type: "end-call" }));
 		}
 
-		if (localStream) {
-			localStream.getTracks().forEach(track => track.stop());
+		if (localStreamRef.current) {
+			localStreamRef.current.getTracks().forEach(track => track.stop());
 		}
 
 		if (pcRef.current)
@@ -498,11 +530,13 @@ export default function CallPage() {
 
 		if (wsRef.current)
 			wsRef.current.close();
+
+		cleanupMedia();
 		navigate("/");
 	};
 
 	return (
-		<div className="w-full min-h-screen flex flex-col bg-black">
+		<div className="w-[80%] min-h-[80%] border-2 flex flex-col bg-black">
 			<div className="flex-1 relative text-white flex items-stretch">
 
 				{/* Remote video */}
@@ -513,7 +547,7 @@ export default function CallPage() {
 						playsInline
 						className="w-full h-full object-cover"
 					/>
-					{!remoteStream && (
+					{!remoteVideoRef && (
 						<p className="absolute text-lg opacity-60 px-4">
 							Waiting for remote user...
 						</p>
@@ -626,6 +660,14 @@ export default function CallPage() {
 							<span className="text-xl">⚙️</span>
 						</button>
 					</div>
+
+					<div className="absolute bottom-4 left-4 bg-black/70 px-3 py-2 rounded text-xs text-green-300">
+						<div>⬇ Download: {liveStats.downloadBitrate} kbps</div>
+						<div>⬆ Upload: {liveStats.uploadBitrate} kbps</div>
+						<div>Jitter: {liveStats.jitter} s</div>
+						<div>Lost: {liveStats.packetsLost}</div>
+					</div>
+
 				</div>
 			</div>
 		</div>
