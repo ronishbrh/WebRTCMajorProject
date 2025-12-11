@@ -120,8 +120,12 @@ export async function signChallenge(privateKey, challenge) {
 	return signature;
 }
 
+// Updated to handle both CryptoKey objects and base64 strings
 export async function verifyChallenge(publicKey, challenge, signature) {
-	//const encoder = new TextEncoder();
+	// If publicKey is a string (base64), import it first
+	if (typeof publicKey === 'string') {
+		publicKey = await importECDSAPublicKey(publicKey);
+	}
 
 	const isValid = await crypto.subtle.verify(
 		{

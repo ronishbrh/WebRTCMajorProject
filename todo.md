@@ -10,7 +10,7 @@
 # Before Presentation
 - [ ] List supported resolition. afaile arbitrary resolution set garne milne hoki number of supported resolution ho.
 - [ ] Call aayo vanne indicator or page
-- [ ] Able to call a specific user.
+- [x] Able to call a specific user.
 - [x] Generate ECDSA key pair
 - [x] store ECDSA key pair locally
 - [x] Store other user's contact detail
@@ -19,9 +19,10 @@
 - [x] display stats such as bandwidth, bitrate, quality if possible
 - [x] Login Page UI improvement. Account creation
 - [x] don't show Public key in navbar but rather in profile
-- [x] After changing our name in the profile page update the DB key and value
+- [ ] After changing our name in the profile page update the DB key and value
 - [ ] Multiple device bich call test garne within a LAN.
 
 # Extra stuffs done
 - [x] Usercard feature to delete contacts
 - [x] Removed adding and displaying oneself in contact list
+- [x] Able to change and update username but not reflected to other users who is a contact and change in username results No Contacts Found (contact loading is based on username)

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useUser } from "../utils/UserContext";
-import { arrayBufferToBase64, base64ToArrayBuffer, decryptAES, deriveSharedSecret, encryptAES, generateECDHKeys, importAESKey, signChallenge, verifyChallenge } from "../utils/crypto";
+import { arrayBufferToBase64, base64ToArrayBuffer, decryptAES, deriveSharedSecret, encryptAES, generateECDHKeys, importAESKey, importECDSAPublicKey, signChallenge, verifyChallenge } from "../utils/crypto";
 import ConnectionTester from "../utils/ConnectionTester";
 
 // Resolution presets
@@ -12,11 +12,11 @@ const RESOLUTIONS = {
 };
 
 export default function CallPage() {
-	const { state: contact } = useLocation();
+	const location = useLocation();
+	const contact = location.state?.contact;
 
 	const localVideoRef = useRef(null);
 	const remoteVideoRef = useRef(null);
-
 	const localStreamRef = useRef(null);
 	const remoteStreamRef = useRef(null);
 
@@ -24,30 +24,35 @@ export default function CallPage() {
 	const [isAudioOn, setIsAudioOn] = useState(true);
 	const [error, setError] = useState(null);
 	const [showEndCallNotification, setShowEndCallNotification] = useState(false);
-
 	const [showSettings, setShowSettings] = useState(false);
 	const [resolution, setResolution] = useState("medium");
-
 	const [liveStats, setLiveStats] = useState({
 		downloadBitrate: 0, uploadBitrate: 0, jitter: 0, packetsLost: 0
-	})
+	});
+	const [hasRemoteStream, setHasRemoteStream] = useState(false);
 
 	const pcRef = useRef(null);
 	const wsRef = useRef(null);
 	const pendingCandidates = useRef([]);
-
+	const pendingIceCandidates = useRef([]);
 	const ECDHKeyPair = useRef(null);
 	const AESKey = useRef(null);
-
-	const navigate = useNavigate();
 	const { identity } = useUser();
 
+	const navigate = useNavigate();
+
+	// Determine call role from navigation state
+	const callInitiatedFromHome = Boolean(location.state?.callInitiated); // caller
+	const incomingCallAccepted = Boolean(location.state?.incomingCall); // callee
+
+	const [isCalling, setIsCalling] = useState(callInitiatedFromHome);
+	const [callAnswered, setCallAnswered] = useState(false);
+	const callTimeoutRef = useRef(null);
 
 	// --------- PURE FUNCTION (no setState allowed here) ------
 	const requestMediaStream = async (resolutionKey) => {
 		try {
 			const res = RESOLUTIONS[resolutionKey];
-
 			const stream = await navigator.mediaDevices.getUserMedia({
 				video: {
 					width: { ideal: res.width },
@@ -55,15 +60,12 @@ export default function CallPage() {
 				},
 				audio: true
 			});
-
 			return { stream, error: null };
-
 		} catch (err) {
 			console.error("Media Device Error:", err);
 			return { stream: null, error: "Unable to access camera/microphone. Please grant permissions and refresh." };
 		}
 	};
-
 
 	const cleanupMedia = () => {
 		if (localStreamRef.current) {
@@ -79,141 +81,203 @@ export default function CallPage() {
 			pcRef.current.close();
 			pcRef.current = null;
 		}
-		if (wsRef.current && wsRef.current.readyState === 1) {
+		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
 			wsRef.current.close();
 			wsRef.current = null;
 		}
+		if (callTimeoutRef.current) {
+			clearTimeout(callTimeoutRef.current);
+			callTimeoutRef.current = null;
+		}
 	};
-
 
 	const handleSignalingMessage = async (data) => {
 		const message = JSON.parse(data);
-
 		const pc = pcRef.current;
 
-		if (message.type === "join" && !pc.currentRemoteDescription && wsRef.current.readyState === 1) {
-			// Only create offer if we don't have remote description yet
+		if (message.type === "call-cancelled") {
+			// console.log("Caller cancelled the call");
+			alert("Call was cancelled");
+			cleanupMedia();
+			navigate("/");
+			return;
+		}
 
+		if (message.type === "call-declined") {
+			// console.log("Callee declined the call");
+			alert(`${contact.userName} declined the call`);
+			cleanupMedia();
+			navigate("/");
+			return;
+		}
+
+		if (message.type === "call-accepted") {
+			// console.log("Call accepted by callee");
+			if (callTimeoutRef.current) {
+				clearTimeout(callTimeoutRef.current);
+				callTimeoutRef.current = null;
+			}
+			
+			setIsCalling(false);
+			setCallAnswered(true);
+			// Caller starts handshake when callee accepts
+			await startHandshake();
+		}
+
+		if (message.type === "join") {
+			// Callee receives join from caller then now start challenge flow
+			// console.log("Received join, starting challenge");
 			const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
-
 			const signature = await signChallenge(identity.privateKey, rawPubKey);
 			const msg = {
 				type: "challenge1",
 				publicKey: arrayBufferToBase64(rawPubKey),
 				signature: arrayBufferToBase64(signature),
-				// userID needed
+				from: identity.userName,
+				to: contact.userName,
 			};
-
-			wsRef.current.send(
-				JSON.stringify(msg)
-			);
+			wsRef.current.send(JSON.stringify(msg));
 			console.log("Challenge1 sent");
+		}
 
-		} else if (message.type === "challenge1") {
+		if (message.type === "challenge1") {
+			console.log("Received challenge1 from", message.from);
 			const rawECDH = base64ToArrayBuffer(message.publicKey);
 			const signature = base64ToArrayBuffer(message.signature);
 
-			const valid = await verifyChallenge(contact.publicKey, rawECDH, signature);
+			// Import contact's ECDSA public key if its a string
+			let contactPublicKey = contact.publicKey;
+			if (typeof contactPublicKey === 'string') {
+				contactPublicKey = await importECDSAPublicKey(contactPublicKey);
+			}
 
+			// console.log("Verifying challenge1 signature...");
+			const valid = await verifyChallenge(contactPublicKey, rawECDH, signature);
 
 			if (valid) {
-				console.log("User verified");
-
+				// console.log("User verified - sending challenge2");
 				const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
-
-				const signature = await signChallenge(identity.privateKey, rawPubKey);
+				const sig = await signChallenge(identity.privateKey, rawPubKey);
 				const msg = {
 					type: "challenge2",
 					publicKey: arrayBufferToBase64(rawPubKey),
-					signature: arrayBufferToBase64(signature),
-					// userID needed
+					signature: arrayBufferToBase64(sig),
+					from: identity.userName,
+					to: contact.userName,
 				};
-
-				wsRef.current.send(
-					JSON.stringify(msg)
-				);
+				wsRef.current.send(JSON.stringify(msg));
+				console.log("Challenge2 sent");
 
 				const publicKey = await crypto.subtle.importKey(
-					"raw",                     // you exported it as raw
-					rawECDH,    // ArrayBuffer or Uint8Array.buffer
-					{
-						name: "ECDH",
-						namedCurve: "P-256",     // MUST match original curve
-					},
-					true,                      // extractable
-					[]                         // ECDH public keys have no usages
+					"raw", rawECDH,
+					{ name: "ECDH", namedCurve: "P-256" },
+					true, []
 				);
 
 				const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
 				const aesKey = await importAESKey(sharedSecret);
 				AESKey.current = aesKey;
-				console.log("Challenge2 sent");
-			} else {
-				console.log("User Unverified");
-			}
+				// console.log("AES key derived");
 
-		} else if (message.type === "challenge2") {
+				// Flush pending ICE candidates now afterwe have AES key
+				if (pendingIceCandidates.current.length > 0) {
+					console.log(`Flushing ${pendingIceCandidates.current.length} pending ICE candidates`);
+					for (const candidate of pendingIceCandidates.current) {
+						await sendCandidate(candidate);
+					}
+					pendingIceCandidates.current = [];
+				}
+			} else {
+				console.error("User Unverified signature failed");
+			}
+		}
+
+		if (message.type === "challenge2") {
+			console.log("Received challenge2 from", message.from);
 			const rawECDH = base64ToArrayBuffer(message.publicKey);
 			const signature = base64ToArrayBuffer(message.signature);
 
-			const valid = await verifyChallenge(contact.publicKey, rawECDH, signature);
+			// console.log("DEBUG contact object:", contact);
+			// console.log("DEBUG contact.publicKey type:", typeof contact.publicKey);
+			// console.log("DEBUG contact.publicKey value:", contact.publicKey);
+
+			// Importing contact's ECDSA public key if its a string
+			let contactPublicKey = contact.publicKey;
+			if (typeof contactPublicKey === 'string') {
+				try {
+					contactPublicKey = await importECDSAPublicKey(contactPublicKey);
+					// console.log("Public key imported successfully, type:", typeof contactPublicKey);
+				} catch (error) {
+					console.error("Failed to import public key:", error);
+					return;
+				}
+			} else if (!contactPublicKey) {
+				// console.error("contact.publicKey is null or undefined!");
+				return;
+			} else {
+				console.log("Public key is already a CryptoKey object");
+			}
+
+
+			const valid = await verifyChallenge(contactPublicKey, rawECDH, signature);
 
 			if (valid) {
-				console.log("User verified");
-
+				console.log("User verified now creating offer");
 				const publicKey = await crypto.subtle.importKey(
-					"raw",                     // you exported it as raw
-					rawECDH,    // ArrayBuffer or Uint8Array.buffer
-					{
-						name: "ECDH",
-						namedCurve: "P-256",     // MUST match original curve
-					},
-					true,                      // extractable
-					[]                         // ECDH public keys have no usages
+					"raw", rawECDH,
+					{ name: "ECDH", namedCurve: "P-256" },
+					true, []
 				);
 
 				const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
 				const aesKey = await importAESKey(sharedSecret);
 				AESKey.current = aesKey;
+		
+
+				// Flush pending ICE candidates
+				if (pendingIceCandidates.current.length > 0) {
+					console.log(`Flushing ${pendingIceCandidates.current.length} pending ICE candidates`);
+					for (const candidate of pendingIceCandidates.current) {
+						await sendCandidate(candidate);
+					}
+					pendingIceCandidates.current = [];
+				}
 
 				const offer = await pc.createOffer();
 				await pc.setLocalDescription(offer);
+				console.log("Created offer, local description set");
 
 				const encoder = new TextEncoder();
 				const sdpBuffer = encoder.encode(offer.sdp);
-
-				// Generate random IV (12 bytes)
 				const { iv, encrypted: encryptedSDPBuffer } = await encryptAES(sdpBuffer, aesKey);
 
-				const message = {
+				const offerMsg = {
 					type: "offer",
 					offer: arrayBufferToBase64(encryptedSDPBuffer),
 					iv: arrayBufferToBase64(iv),
-					// userID needed
+					from: identity.userName,
+					to: contact.userName,
 				};
-
-				wsRef.current.send(
-					JSON.stringify(message)
-				);
+				wsRef.current.send(JSON.stringify(offerMsg));
 				console.log("Offer sent");
 			} else {
-				console.log("User Unverified");
+				console.error("User Unverified signature failed");
 			}
+		}
 
-		} else if (message.type === "offer") {
-			console.log("Received offer");
-
+		if (message.type === "offer") {
+			console.log("Received offer from", message.from);
 			const iv = base64ToArrayBuffer(message.iv);
 			const encryptedSDPBuffer = base64ToArrayBuffer(message.offer);
-
 			const SDPBuffer = await decryptAES(encryptedSDPBuffer, AESKey.current, iv);
-
 			const decoder = new TextDecoder();
 			const sdp = decoder.decode(SDPBuffer);
 
 			await pc.setRemoteDescription({ type: "offer", sdp });
+		
 
 			// Add queued ICE candidates
+			console.log(`Flushing ${pendingCandidates.current.length} queued ICE candidates`);
 			for (const c of pendingCandidates.current) {
 				try {
 					await pc.addIceCandidate(c);
@@ -226,36 +290,36 @@ export default function CallPage() {
 			// Send answer
 			const answer = await pc.createAnswer();
 			await pc.setLocalDescription(answer);
+			console.log("Created and set local description (answer)");
 
 			const encoder = new TextEncoder();
 			const ansSdpBuffer = encoder.encode(answer.sdp);
-
 			const { iv: ansiv, encrypted: encryptedAnsSDPBuffer } = await encryptAES(ansSdpBuffer, AESKey.current);
 
-			const msg = {
+			const answerMsg = {
 				type: "answer",
 				answer: arrayBufferToBase64(encryptedAnsSDPBuffer),
 				iv: arrayBufferToBase64(ansiv),
-				// userID needed
+				from: identity.userName,
+				to: contact.userName,
 			};
+			wsRef.current.send(JSON.stringify(answerMsg));
+			console.log("Answer sent");
+		}
 
-			wsRef.current.send(
-				JSON.stringify(msg)
-			);
-
-		} else if (message.type === "answer") {
-			console.log("Received answer");
+		if (message.type === "answer") {
+			console.log("Received answer from", message.from);
 			const iv = base64ToArrayBuffer(message.iv);
 			const encryptedSDPBuffer = base64ToArrayBuffer(message.answer);
-
 			const SDPBuffer = await decryptAES(encryptedSDPBuffer, AESKey.current, iv);
-
 			const decoder = new TextDecoder();
 			const sdp = decoder.decode(SDPBuffer);
 
 			await pc.setRemoteDescription({ type: "answer", sdp });
+			console.log("Set remote description (answer)");
 
 			// Add queued ICE candidates
+			console.log(`Flushing ${pendingCandidates.current.length} queued ICE candidates`);
 			for (const c of pendingCandidates.current) {
 				try {
 					await pc.addIceCandidate(c);
@@ -265,59 +329,96 @@ export default function CallPage() {
 			}
 			pendingCandidates.current = [];
 
-		} else if (message.type === "ice") {
+			setIsCalling(false);
+			setCallAnswered(true);
+			console.log("Call fully established");
+		}
+
+		if (message.type === "ice") {
+			console.log("Received ICE candidate from", message.from);
 			const iv = base64ToArrayBuffer(message.iv);
 			const encryptedCandidateBuffer = base64ToArrayBuffer(message.candidate);
-
-			const candidateBuffer = await decryptAES(
-				encryptedCandidateBuffer,
-				AESKey.current,
-				iv
-			);
-
+			const candidateBuffer = await decryptAES(encryptedCandidateBuffer, AESKey.current, iv);
 			const decoder = new TextDecoder();
 			const decodedString = decoder.decode(candidateBuffer);
-
 			const candidateObj = JSON.parse(decodedString);
-
 			const candidate = new RTCIceCandidate(candidateObj);
 
 			if (!pc.currentRemoteDescription) {
-				//console.log("Pushed");
+				console.log("Queueing ICE candidate (no remote description yet)");
 				pendingCandidates.current.push(candidate);
 			} else {
 				try {
 					await pc.addIceCandidate(candidate);
-					//console.log("Flushed");
+					console.log("Added ICE candidate successfully");
 				} catch (e) {
 					console.error("Error adding ICE candidate", e);
 				}
 			}
+		}
 
-		} else if (message.type === "end-call") {
+		if (message.type === "end-call") {
 			console.log("Remote user ended call");
-
 			setShowEndCallNotification(true);
 			setTimeout(() => {
 				cleanupMedia();
-
 				navigate("/");
 			}, 3000);
-			return;
 		}
 	};
 
+	async function sendCandidate(candidate) {
+		if (!AESKey.current) {
+			console.warn("AES key not ready so queueing ICE candidate");
+			pendingIceCandidates.current.push(candidate);
+			return;
+		}
 
+		const encoder = new TextEncoder();
+		const candidateBuffer = encoder.encode(JSON.stringify(candidate));
+		const { iv, encrypted } = await encryptAES(candidateBuffer, AESKey.current);
 
+		wsRef.current.send(JSON.stringify({
+			type: "ice",
+			candidate: arrayBufferToBase64(encrypted),
+			iv: arrayBufferToBase64(iv),
+			from: identity.userName,
+			to: contact.userName,
+		}));
+	}
+
+	async function startHandshake() {
+		if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+			console.error("WS not open so cannot start handshake");
+			return;
+		}
+
+		console.log("Starting handshake and sending join");
+		wsRef.current.send(
+			JSON.stringify({
+				type: "join",
+				from: identity.userName,
+				to: contact.userName,
+			})
+		);
+	}
 
 	// --------- INITIAL STARTUP ---------
 	useEffect(() => {
 		let active = true;
 
 		if (!identity || !contact) {
-			console.error("Identity or contact isn't set");
+			console.error("Identity or contact isn't set", { identity, contact });
 			navigate("/login");
+			return;
 		}
+
+		// console.log("CallPage initialized", {
+		// 	identity: identity.userName,
+		// 	contact: contact.userName,
+		// 	callInitiated: callInitiatedFromHome,
+		// 	incomingCall: incomingCallAccepted
+		// });
 
 		const init = async () => {
 			const { stream, error } = await requestMediaStream("medium");
@@ -329,11 +430,9 @@ export default function CallPage() {
 				return;
 			}
 
-
 			localStreamRef.current = stream;
 			setError(null);
 
-			// Attach to video element
 			if (localVideoRef.current) {
 				localVideoRef.current.srcObject = stream;
 			}
@@ -343,106 +442,142 @@ export default function CallPage() {
 					{ urls: ["stun:stun.l.google.com:19302"] },
 				],
 			});
-
 			pcRef.current = pc;
 
 			stream.getTracks().forEach((track) => {
+				// console.log("Adding local track to PC:", track.kind, track.enabled);
 				pc.addTrack(track, stream);
 			});
 
 			pc.ontrack = (event) => {
-				const stream = event.streams[0];
-				remoteVideoRef.current.srcObject = stream;
-				remoteStreamRef.current = stream;
-
+				// console.log("Received remote track:", event.track.kind, "readyState:", event.track.readyState);
+				if (!remoteStreamRef.current) {
+					remoteStreamRef.current = new MediaStream();
+					remoteVideoRef.current.srcObject = remoteStreamRef.current;
+					console.log("Created new remote MediaStream");
+				}
+				remoteStreamRef.current.addTrack(event.track);
+				// console.log("Added track to remote stream. Total tracks:", remoteStreamRef.current.getTracks().length);
+				setHasRemoteStream(true);
 			};
 
-			//pc.onicecandidate = (event) => {
-			//	if (event.candidate) {
-			//		setLocalCandidates((prev) => [...prev, event.candidate]);
-			//	}
-			//};
-
-
-			//const ws = new WebSocket("wss://192.168.101.4:8080");
-			ECDHKeyPair.current = await generateECDHKeys();
-
-			const ws = new WebSocket("ws://localhost:8080");
-			wsRef.current = ws;
-
-			ws.onopen = () => console.log("Connected to signaling server");
-			ws.onmessage = (msg) => handleSignalingMessage(msg.data);
-
-			//const msg = {
-			//	from: {userName, publicKey: identity.publicKey},
-			//	to: {userName: contact.userName, publicKey: contact.publicKey}
-			//};
-
 			pc.oniceconnectionstatechange = () => {
+				console.log("ICE Connection State:", pc.iceConnectionState);
 				if (pc.iceConnectionState === "connected") {
-					console.log("Call connected — starting connection test...");
-
 					const tester = new ConnectionTester(pc, (stats) => {
 						setLiveStats({
 							downloadBitrate: Math.round(stats.downloadBitrate || 0),
 							uploadBitrate: Math.round(stats.uploadBitrate || 0),
 							jitter: stats.jitter?.toFixed(3),
 							packetsLost: stats.packetsLost
-						})
-					})
+						});
+					});
 					tester.start(1000);
 					pcRef.current._tester = tester;
 				}
 			};
 
-
-			// Send ICE candidates to remote peer
-			pc.onicecandidate = async (event) => {
-				if (event.candidate && ws.readyState === 1) {
-					if (!AESKey.current) console.error("AESKey not set");
-
-					const encoder = new TextEncoder();
-					const candidateString = JSON.stringify(event.candidate);
-					const candidateBuffer = encoder.encode(candidateString);
-
-					const { iv, encrypted: encryptedCandidateBuffer } = await encryptAES(candidateBuffer, AESKey.current);
-
-					ws.send(JSON.stringify({
-						type: "ice",
-						candidate: arrayBufferToBase64(encryptedCandidateBuffer),
-						iv: arrayBufferToBase64(iv)
-					}));
+			pc.onicecandidate = (event) => {
+				if (event.candidate) {
+					// console.log("Generated ICE candidate:", event.candidate.type);
+					sendCandidate(event.candidate);
+				} else {
+					console.log("ICE gathering complete");
 				}
 			};
 
+			pc.onconnectionstatechange = () => {
+				console.log("Connection State:", pc.connectionState);
+			};
+
+			pc.onsignalingstatechange = () => {
+				console.log("Signaling State:", pc.signalingState);
+			};
+
+
+			ECDHKeyPair.current = await generateECDHKeys();
+
+			const ws = new WebSocket("ws://localhost:8080");
+			wsRef.current = ws;
+
+			ws.onopen = () => {
+				console.log("WS connected registering");
+				wsRef.current.send(JSON.stringify({ type: "register", userName: identity.userName }));
+
+				// If caller: send call-request and wait for acceptance
+				if (callInitiatedFromHome) {
+					console.log("Sending call-request as caller");
+					setIsCalling(true);
+					wsRef.current.send(
+						JSON.stringify({
+							type: "call-request",
+							from: identity.userName,
+							to: contact.userName,
+						})
+					);
+
+					callTimeoutRef.current = setTimeout(() => {
+						if (!callAnswered) {
+							alert("Call not answered");
+							wsRef.current.send(
+								JSON.stringify({
+									type: "call-cancelled",
+									from: identity.userName,
+									to: contact.userName,
+								})
+							);
+							cleanupMedia();
+							navigate("/");
+						}
+					}, 30000);
+				}
+
+				// If callee: notify caller we accepted and start handshake
+				if (incomingCallAccepted) {
+					console.log("Sending call-accepted as callee");
+					setCallAnswered(true);
+					wsRef.current.send(
+						JSON.stringify({
+							type: "call-accepted",
+							from: identity.userName,
+							to: contact.userName,
+						})
+					);
+					// Callee waits for caller's "join" message
+				}
+			};
+
+			ws.onmessage = (msg) => {
+				console.log("Message received:", msg.data);
+				handleSignalingMessage(msg.data);
+			};
+
+			ws.onerror = (e) => {
+				console.error("WebSocket error", e);
+			};
 		};
 
 		init();
 
 		return () => {
 			active = false;
-
-
-
-			if (pcRef.current) {
-				pcRef.current.close();
-				pcRef.current = null;
-
-			}
-			if (wsRef.current && wsRef.current.readyState === 1) {
-				wsRef.current.close();
-				wsRef.current = null;
-			}
-
-			if (pcRef.current?._tester)
-				pcRef.current._tester.stop();
-
-			console.log("This ran");
-
+			cleanupMedia();
 		};
 	}, []);
 
-
+	const cancelCalling = () => {
+		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+			wsRef.current.send(
+				JSON.stringify({
+					type: "call-cancelled",
+					from: identity.userName,
+					to: contact.userName,
+				})
+			);
+		}
+		cleanupMedia();
+		navigate("/");
+	};
 
 	// -------- RESOLUTION CHANGE ----------
 	const handleResolutionChange = async (newRes) => {
@@ -460,30 +595,23 @@ export default function CallPage() {
 			const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
 			const newVideoTrack = newStream.getVideoTracks()[0];
 
-			// Replace track in PeerConnection
 			const videoSender = pc.getSenders().find(sender => sender.track?.kind === 'video');
 			if (videoSender && newVideoTrack) {
 				await videoSender.replaceTrack(newVideoTrack);
 			}
 
-			// Replace track in local preview
 			const localVideoTracks = localVideoRef.current.srcObject.getTracks();
 			const updatedTracks = localVideoTracks.filter(t => t.kind !== 'video').concat(newVideoTrack);
 			localVideoRef.current.srcObject = new MediaStream(updatedTracks);
 
-			// Stop old video track
 			oldVideoTrack.stop();
 
-			// Keep audio from old stream
 			const oldAudioTrack = localStreamRef.current.getAudioTracks()[0];
 			const combinedStream = new MediaStream([newVideoTrack, oldAudioTrack]);
-
 			localStreamRef.current = combinedStream;
 		} else {
-			// Fallback if no previous stream
 			localStreamRef.current = newStream;
 			if (localVideoRef.current) localVideoRef.current.srcObject = newStream;
-
 			if (pc) {
 				newStream.getTracks().forEach(track => pc.addTrack(track, newStream));
 			}
@@ -492,11 +620,8 @@ export default function CallPage() {
 		setShowSettings(false);
 	};
 
-
-	// ----------- TOGGLE VIDEO ----------
 	const toggleVideo = () => {
 		if (!localStreamRef.current) return;
-
 		const track = localStreamRef.current.getVideoTracks()[0];
 		if (track) {
 			track.enabled = !track.enabled;
@@ -504,10 +629,8 @@ export default function CallPage() {
 		}
 	};
 
-	// ----------- TOGGLE AUDIO ----------
 	const toggleAudio = () => {
 		if (!localStreamRef.current) return;
-
 		const track = localStreamRef.current.getAudioTracks()[0];
 		if (track) {
 			track.enabled = !track.enabled;
@@ -515,39 +638,40 @@ export default function CallPage() {
 		}
 	};
 
-	// ----------- END CALL ----------
 	const handleEndCall = () => {
-		if (wsRef.current && wsRef.current.readyState === 1) {
-			wsRef.current.send(JSON.stringify({ type: "end-call" }));
+		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+			wsRef.current.send(JSON.stringify({
+				type: "end-call",
+				from: identity.userName,
+				to: contact.userName,
+			}));
 		}
-
-		if (localStreamRef.current) {
-			localStreamRef.current.getTracks().forEach(track => track.stop());
-		}
-
-		if (pcRef.current)
-			pcRef.current.close();
-
-		if (wsRef.current)
-			wsRef.current.close();
-
 		cleanupMedia();
 		navigate("/");
 	};
 
 	return (
-		<div className="w-[80%] min-h-[80%] border-2 flex flex-col bg-black">
-			<div className="flex-1 relative text-white flex items-stretch">
+		<div className="w-[80%] h-[80%] border-2 flex flex-col bg-black overflow-hidden">
+			{/* CALLING overlay for caller */}
+			{isCalling && (
+				<div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-50">
+					<p className="text-white text-lg mb-4">Calling {contact.userName}...</p>
+					<div className="flex gap-3">
+						<button onClick={cancelCalling} className="px-4 py-2 rounded bg-gray-700 text-white hover:bg-gray-600">Cancel</button>
+					</div>
+				</div>
+			)}
 
+			<div className="flex-1 relative text-white flex items-stretch">
 				{/* Remote video */}
-				<div className="flex-1 flex items-center justify-center bg-gray-800">
+				<div className="flex-1 flex items-center justify-center bg-gray-800 overflow-hidden">
 					<video
 						ref={remoteVideoRef}
 						autoPlay
 						playsInline
-						className="w-full h-full object-cover"
+						className="w-full h-full object-contain"
 					/>
-					{!remoteVideoRef && (
+					{!hasRemoteStream && (
 						<p className="absolute text-lg opacity-60 px-4">
 							Waiting for remote user...
 						</p>
@@ -561,16 +685,14 @@ export default function CallPage() {
 						autoPlay
 						playsInline
 						muted
-						className="w-full h-full object-cover"
+						className="w-full h-full object-contain"
 						style={{ transform: "scaleX(-1)" }}
 					/>
-
 					{!isVideoOn && (
 						<div className="absolute inset-0 bg-gray-900 flex items-center justify-center">
 							<span className="text-4xl">👤</span>
 						</div>
 					)}
-
 					<div className="absolute bottom-1 left-1 bg-black bg-opacity-70 px-2 text-xs rounded">
 						You • {RESOLUTIONS[resolution].label}
 					</div>
@@ -596,7 +718,6 @@ export default function CallPage() {
 				{showSettings && (
 					<div className="absolute top-20 right-4 bg-gray-900 border border-gray-700 rounded-lg shadow-2xl p-4 w-64">
 						<h3 className="text-sm font-semibold mb-3">Video Quality</h3>
-
 						{Object.entries(RESOLUTIONS).map(([key, value]) => (
 							<button
 								key={key}
@@ -612,7 +733,6 @@ export default function CallPage() {
 								</div>
 							</button>
 						))}
-
 						<p className="text-xs text-gray-400 mt-3 border-t pt-2">
 							Higher quality uses more bandwidth.
 						</p>
@@ -621,8 +741,6 @@ export default function CallPage() {
 
 				{/* Bottom controls */}
 				<div className="absolute bottom-6 left-0 right-0 flex justify-center gap-4">
-
-					{/* End Call */}
 					<button
 						onClick={handleEndCall}
 						className="px-6 py-3 bg-red-600 hover:bg-red-700 rounded-full text-sm font-medium shadow-lg"
@@ -630,10 +748,7 @@ export default function CallPage() {
 						End Call
 					</button>
 
-					{/* Controls */}
 					<div className="flex gap-3 bg-gray-800 bg-opacity-80 rounded-full p-2 shadow-lg backdrop-blur">
-
-						{/* Audio */}
 						<button
 							onClick={toggleAudio}
 							className={`p-3 rounded-full transition ${isAudioOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
@@ -642,7 +757,6 @@ export default function CallPage() {
 							<span className="text-xl">{isAudioOn ? "🎙️" : "🔇"}</span>
 						</button>
 
-						{/* Video */}
 						<button
 							onClick={toggleVideo}
 							className={`p-3 rounded-full transition ${isVideoOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
@@ -651,7 +765,6 @@ export default function CallPage() {
 							<span className="text-xl">{isVideoOn ? "🎥" : "📷"}</span>
 						</button>
 
-						{/* Settings */}
 						<button
 							onClick={() => setShowSettings(!showSettings)}
 							className={`p-3 rounded-full ${showSettings ? "bg-blue-600" : "bg-gray-700 hover:bg-gray-600"
@@ -667,7 +780,6 @@ export default function CallPage() {
 						<div>Jitter: {liveStats.jitter} s</div>
 						<div>Lost: {liveStats.packetsLost}</div>
 					</div>
-
 				</div>
 			</div>
 		</div>
