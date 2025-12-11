@@ -9,7 +9,7 @@
 
 # Before Presentation
 - [ ] List supported resolition. afaile arbitrary resolution set garne milne hoki number of supported resolution ho.
-- [ ] Call aayo vanne indicator or page
+- [x] Call aayo vanne indicator or page (only basic initially done)
 - [x] Able to call a specific user.
 - [x] Generate ECDSA key pair
 - [x] store ECDSA key pair locally
