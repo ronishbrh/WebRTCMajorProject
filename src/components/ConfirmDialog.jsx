@@ -11,13 +11,13 @@ export function ConfirmDialog({ open, title, message, onConfirm, onCancel }) {
       <div className="flex justify-around">
         <button
           onClick={onConfirm}
-          className="bg-red-600 text-white px-4 py-2 rounded"
+          className="bg-red-600 text-white px-4 py-2 rounded cursor-pointer"
         >
           Yes, Delete
         </button>
         <button
           onClick={onCancel}
-          className="bg-gray-300 px-4 py-2 rounded"
+          className="bg-gray-300 px-4 py-2 rounded cursor-pointer"
         >
           Cancel
         </button>
