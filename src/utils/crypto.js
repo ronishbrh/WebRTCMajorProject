@@ -10,12 +10,46 @@ export async function generateECDHKeys() {
 	);
 }
 
-export async function exportKey(key) {
-	const exported = await window.crypto.subtle.exportKey("spki", key); // for public key
-	const exportedKeyBuffer = new Uint8Array(exported);
-	const base64Key = btoa(String.fromCharCode(...exportedKeyBuffer));
-	return base64Key;
+export async function exportECDSAPublicKey(key) {
+    const exported = await crypto.subtle.exportKey("spki", key);
+    return btoa(String.fromCharCode(...new Uint8Array(exported)));
 }
+
+export async function exportECDSAPrivateKey(key) {
+    const exported = await crypto.subtle.exportKey("pkcs8", key);
+    return btoa(String.fromCharCode(...new Uint8Array(exported)));
+}
+
+export async function importECDSAPublicKey(base64) {
+    const bin = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+
+    return crypto.subtle.importKey(
+        "spki",
+        bin,
+        {
+            name: "ECDSA",
+            namedCurve: "P-256",
+        },
+        true,
+        ["verify"]
+    );
+}
+
+export async function importECDSAPrivateKey(base64) {
+    const bin = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+
+    return crypto.subtle.importKey(
+        "pkcs8",
+        bin,
+        {
+            name: "ECDSA",
+            namedCurve: "P-256",
+        },
+        true,
+        ["sign"]
+    );
+}
+
 
 // Step 4: Derive shared secret from ECDH public and private keys
 export async function deriveSharedSecret(privateKey, publicKey) {
@@ -74,7 +108,7 @@ export async function decryptAES(encryptedData, aesKey, iv) {
 
 // Step 3: Sign the nonce with ECDSA to authenticate the user
 export async function signChallenge(privateKey, challenge) {
-	const encoder = new TextEncoder();
+	//const encoder = new TextEncoder();
 	const signature = await crypto.subtle.sign(
 		{
 			name: "ECDSA",
@@ -86,8 +120,12 @@ export async function signChallenge(privateKey, challenge) {
 	return signature;
 }
 
+// Updated to handle both CryptoKey objects and base64 strings
 export async function verifyChallenge(publicKey, challenge, signature) {
-	const encoder = new TextEncoder();
+	// If publicKey is a string (base64), import it first
+	if (typeof publicKey === 'string') {
+		publicKey = await importECDSAPublicKey(publicKey);
+	}
 
 	const isValid = await crypto.subtle.verify(
 		{

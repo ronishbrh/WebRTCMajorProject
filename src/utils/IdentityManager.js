@@ -91,6 +91,7 @@ export class IdentityManager {
 			encryptedPrivateKey,
 			salt: Array.from(salt),
 			publicKey: keyPair.publicKey,
+			contacts: [],
 		});
 
 		console.log("User created");
@@ -101,7 +102,6 @@ export class IdentityManager {
 	async unlockUser(userName, password) {
 		const record = await this._getObject("keys", userName);
 		if (!record) throw new Error("User not found");
-		console.log("Found User");
 
 		if (userName != record.userName) {
 			console.error("userName doesn't match the userName stored in value \t", + userName + "\t" + record.userName);
@@ -119,7 +119,7 @@ export class IdentityManager {
 			["sign"]
 		);
 
-		return { userName: userName, privateKey, publicKey: record.publicKey, aesKey };
+		return { userName: userName, privateKey, publicKey: record.publicKey, aesKey, contacts: record.contacts };
 	}
 
 	// ---------------- Store encrypted user data ----------------
@@ -152,5 +152,33 @@ export class IdentityManager {
 
 		return record.contacts || [];
 	}
+
+	async deleteContact(userName, contactUserName) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		record.contacts = (record.contacts || []).filter(
+			(c) => c.userName !== contactUserName
+		);
+
+		await this._storeObject("keys", userName, record);
+	}
+
+
+	async updateUsername(oldName, newName) {
+		const user = await this._getObject("keys", oldName);
+		if (!user) throw new Error("User not found");
+
+
+		user.userName = newName;
+
+		// Move storage to new key
+		const data = JSON.stringify(user);
+		localStorage.removeItem(`user_${oldName}`);
+		localStorage.setItem(`user_${newName}`, data);
+
+		return user;
+	}
+
 
 }

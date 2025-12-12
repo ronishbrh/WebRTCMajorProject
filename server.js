@@ -4,34 +4,52 @@ const wss = new WebSocketServer({ port: 8080 });
 
 console.log("WebSocket signaling server running on ws://localhost:8080");
 
-let clients = [];
+let clients = {}; // key = username, value = ws
 
 wss.on("connection", (ws) => {
-	console.log("Client connected");
+  let username = null;
 
+  ws.on("message", (msg) => {
+    const data = JSON.parse(msg);
 
-	clients.forEach((client) => {
-		if (client.readyState === 1) {
-			client.send(JSON.stringify({ type: "join" }));
-		}
-	});
+    if (data.type === "register") {
+      username = data.userName;
+      clients[data.userName] = ws;
+      console.log(`User registered: ${data.userName}`);
+      return;
+    }
 
-	clients.push(ws);
+    //forwarding recipient
+    const target = clients[data.to];
+    if (!target) {
+      console.warn(`Target user ${data.to} not connected`);
+      return;
+    }
 
-	ws.on("message", (data) => {
-		const msg = data.toString();
-		console.log("Received:", msg);
+    switch (data.type) {
+      case "call-request":
+      case "call-accepted":
+      case "call-declined":
+      case "call-cancelled":
+      case "join":
+      case "challenge1":
+      case "challenge2":
+      case "offer":
+      case "answer":
+      case "ice":
+      case "end-call":
+        target.send(JSON.stringify(data));
+        console.log(`Forwarded ${data.type} from ${data.from} to ${data.to}`);
+        break;
+      default:
+        console.warn(`Unknown message type: ${data.type}`);
+    }
+  });
 
-		// broadcast to all OTHER clients
-		clients.forEach((client) => {
-			if (client !== ws && client.readyState === 1) {
-				client.send(msg);
-			}
-		});
-	});
-
-	ws.on("close", () => {
-		console.log("Client disconnected");
-		clients = clients.filter((c) => c !== ws);
-	});
+  ws.on("close", () => {
+    if (username) {
+      delete clients[username];
+      console.log(`User disconnected: ${username}`);
+    }
+  });
 });

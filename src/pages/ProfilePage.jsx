@@ -1,28 +1,100 @@
-import { useEffect } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { QRCodeCanvas } from "qrcode.react";
+import { FiCopy } from 'react-icons/fi';
+import { FaQrcode } from "react-icons/fa";
 
+import { IdentityManager } from '../utils/IdentityManager.js';
 import Navbar from "../components/Navbar.jsx";
 import { useUser } from "../utils/UserContext";
-import { exportKey } from "../utils/crypto";
+import { exportECDSAPublicKey } from "../utils/crypto";
 
 
 import profileIcon from "../assets/userProfileGeneric.png";
-import { useState } from "react";
+
 
 export default function ProfilePage() {
     const navigate = useNavigate();
 
     const { identity } = useUser();
+    const identityManager = new IdentityManager();
 
     const [name, setName] = useState(identity?.userName);
     const [pubKey, setPubKey] = useState("");
+
+    const [showQR, setShowQR] = useState(false);
+    const qrRef = useRef();
+
+    const [saving, setSaving] = useState(false);
+    const [savedMessage, setSavedMessage] = useState("");
+
+
+    const saveName = async () => {
+        if (!identity) return;
+
+        if (name.trim() === "" || name === identity.userName) return;
+
+        try {
+            setSaving(true);
+
+            
+            
+            const updated = await identityManager.updateUsername(identity.userName, name);
+            setName(updated.userName);
+
+            // Update in UserContext
+            identity.userName = name;
+
+            setSavedMessage("Username updated!");
+            setTimeout(() => setSavedMessage(""), 2000);
+
+        } catch (err) {
+            console.log(err);
+            alert("Failed to update username.");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const copyPublicKey = () => {
+        navigator.clipboard.writeText(pubKey);
+
+    }
+
+    function downloadQR() {
+        const canvas = qrRef.current.querySelector("canvas");
+        const pngUrl = canvas.toDataURL("image/png");
+
+        const link = document.createElement("a");
+        link.href = pngUrl;
+        link.download = "public_key_qr.png";
+        link.click();
+    }
+
+    async function shareQR() {
+        const canvas = qrRef.current.querySelector("canvas");
+        canvas.toBlob(async (blob) => {
+            const file = new File([blob], "public_key_qr.png", { type: "image/png" });
+
+            if (navigator.share) {
+                await navigator.share({
+                    title: "My Public Key",
+                    text: "Scan this QR code to add my public key.",
+                    files: [file]
+                });
+            } else {
+                alert("Sharing not supported on this device");
+            }
+        });
+    }
+
 
     useEffect(() => {
         if (!identity) {
             navigate("/");
         } else {
             const loadKey = async () => {
-                const keyText = await exportKey(identity.publicKey);
+                const keyText = await exportECDSAPublicKey(identity.publicKey);
                 setPubKey(keyText);
             };
 
@@ -33,7 +105,7 @@ export default function ProfilePage() {
     return (
         <div className="w-full min-h-screen flex flex-col">
             <Navbar
-                onHomeClick={() => navigate("/home")}
+                onHomeClick={() => navigate("/")}
                 onContactClick={() => navigate("/contact")}
             />
 
@@ -57,13 +129,79 @@ export default function ProfilePage() {
                             autoFocus
                         />
 
+                        {name !== identity?.userName && (
+                            <button
+                                onClick={saveName}
+                                disabled={saving}
+                                className="mt-2 w-fit bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400"
+                            >
+                                {saving ? "Saving..." : "Save"}
+                            </button>
+                        )}
+
+                        {savedMessage && (
+                            <p className="text-green-600 mt-2 text-sm">{savedMessage}</p>
+                        )}
+
+
 
                         <p className="wrap-break-words text-sm  text-gray-500 ">{pubKey}</p>
+                        <div className="flex flex-row gap-4">
+                            <button onClick={copyPublicKey} className="text-gray-600 hover:text-black">
+                                <FiCopy size={20} />
+                            </button>
+                            <button onClick={() => setShowQR(true)} className="text-gray-600 hover:text-black">
+                                <FaQrcode size={20} />
+                            </button>
+                        </div>
+
                     </div>
                 </div>
 
             </main>
+
+            {showQR && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center px-4">
+                    <div className="bg-white p-6 rounded-lg shadow-xl text-center">
+                        <h3 className="text-lg font-semibold mb-3">Public Key QR Code</h3>
+
+                        <div ref={qrRef} className="p-4 bg-white rounded">
+                            <QRCodeCanvas value={pubKey} size={220} />
+                        </div>
+
+                        <div className="flex justify-between mt-4 gap-3">
+
+                            {/* Download button */}
+                            <button
+                                onClick={downloadQR}
+                                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                            >
+                                Download
+                            </button>
+
+                            {/* Share button */}
+                            <button
+                                onClick={shareQR}
+                                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+                            >
+                                Share
+                            </button>
+
+                            {/* Close */}
+                            <button
+                                onClick={() => setShowQR(false)}
+                                className="bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
         </div>
+
+
     );
 
 }
