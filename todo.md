@@ -3,7 +3,7 @@
 - [ ] Call aayo vanne indicator or page
 - [x] Generate ECDSA key pair
 - [x] store ECDSA key pair locally
-- [ ] Store other user's contact detail
+- [x] Store other user's contact detail
 - [ ] Ability to add peaple(contacts). a page or form to enter other peoples key pair.
 - [ ] Secure the signaling process. Encrypt/decrypt offer and ice candidates between peers.
 - [ ] Handle renegotiation, retry call

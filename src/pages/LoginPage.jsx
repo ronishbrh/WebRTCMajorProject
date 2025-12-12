@@ -12,6 +12,14 @@ export default function Login({ onUnlocked }) {
 		try {
 			const identity = await identityManager.unlockUser(userName, password);
 			onUnlocked(identity); // parent component gets private key + AES key
+			const contacts = await identityManager.getContacts(userName);
+			if (!contacts.find(obj => obj.userName === userName)){
+				await identityManager.addContact(userName, {userName: userName, publicKey: identity.publicKey, signalServer: ""});
+				console.log("!Exist");
+			} else {
+				console.log("Exist");
+
+			}
 		} catch (err) {
 			console.log(err);
 			const identity = await identityManager.createUser(userName, password);
