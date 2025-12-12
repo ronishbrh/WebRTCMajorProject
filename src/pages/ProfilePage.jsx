@@ -4,6 +4,7 @@ import { QRCodeCanvas } from "qrcode.react";
 import { FiCopy } from 'react-icons/fi';
 import { FaQrcode } from "react-icons/fa";
 
+import { IdentityManager } from '../utils/IdentityManager.js';
 import Navbar from "../components/Navbar.jsx";
 import { useUser } from "../utils/UserContext";
 import { exportECDSAPublicKey } from "../utils/crypto";
@@ -16,12 +17,44 @@ export default function ProfilePage() {
     const navigate = useNavigate();
 
     const { identity } = useUser();
+    const identityManager = new IdentityManager();
 
     const [name, setName] = useState(identity?.userName);
     const [pubKey, setPubKey] = useState("");
 
     const [showQR, setShowQR] = useState(false);
     const qrRef = useRef();
+
+    const [saving, setSaving] = useState(false);
+    const [savedMessage, setSavedMessage] = useState("");
+
+
+    const saveName = async () => {
+        if (!identity) return;
+
+        if (name.trim() === "" || name === identity.userName) return;
+
+        try {
+            setSaving(true);
+
+            
+            
+            const updated = await identityManager.updateUsername(identity.userName, name);
+            setName(updated.userName);
+
+            // Update in UserContext
+            identity.userName = name;
+
+            setSavedMessage("Username updated!");
+            setTimeout(() => setSavedMessage(""), 2000);
+
+        } catch (err) {
+            console.log(err);
+            alert("Failed to update username.");
+        } finally {
+            setSaving(false);
+        }
+    };
 
     const copyPublicKey = () => {
         navigator.clipboard.writeText(pubKey);
@@ -96,17 +129,32 @@ export default function ProfilePage() {
                             autoFocus
                         />
 
+                        {name !== identity?.userName && (
+                            <button
+                                onClick={saveName}
+                                disabled={saving}
+                                className="mt-2 w-fit bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400"
+                            >
+                                {saving ? "Saving..." : "Save"}
+                            </button>
+                        )}
+
+                        {savedMessage && (
+                            <p className="text-green-600 mt-2 text-sm">{savedMessage}</p>
+                        )}
+
+
 
                         <p className="wrap-break-words text-sm  text-gray-500 ">{pubKey}</p>
                         <div className="flex flex-row gap-4">
                             <button onClick={copyPublicKey} className="text-gray-600 hover:text-black">
-                            <FiCopy size={20} />
-                        </button>
-                        <button onClick={() => setShowQR(true)} className="text-gray-600 hover:text-black">
-                            <FaQrcode size={20} />
-                        </button>
+                                <FiCopy size={20} />
+                            </button>
+                            <button onClick={() => setShowQR(true)} className="text-gray-600 hover:text-black">
+                                <FaQrcode size={20} />
+                            </button>
                         </div>
-                        
+
                     </div>
                 </div>
 

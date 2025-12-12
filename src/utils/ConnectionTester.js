@@ -1,65 +1,83 @@
-// utils/ConnectionTester.js
+
 export default class ConnectionTester {
-    constructor(pc) {
+    constructor(pc, onUpdate) {
         this.pc = pc;
+        this.onUpdate = onUpdate; 
         this.collectedStats = [];
+
+        this.lastBytesReceived = 0;
+        this.lastBytesSent = 0;
+        this.lastTimestamp = 0;
+
+        this.running = false;
     }
 
-    /**
-     * Start collecting WebRTC stats
-     * @param {number} durationMs
-     * @param {number} intervalMs
-     * @returns {Promise<Array>}
-     */
-    async startTest(durationMs = 5000, intervalMs = 1000) {
-        const startTime = Date.now();
+    start(intervalMs = 1000) {
+        this.running = true;
 
-        while (Date.now() - startTime < durationMs) {
-            const statsReport = await this.pc.getStats();
-            const summary = {};
+        const loop = async () => {
+            if (!this.running) return;
 
-            statsReport.forEach(report => {
-                if (report.type === "inbound-rtp") {
-                    summary.packetsReceived = report.packetsReceived;
-                    summary.bytesReceived = report.bytesReceived;
-                    summary.jitter = report.jitter;
-                    summary.packetsLost = report.packetsLost;
+            const stats = await this.pc.getStats();
+            let report = {};
+
+            stats.forEach(r => {
+                if (r.type === "inbound-rtp" && !r.isRemote) {
+                    report.packetsReceived = r.packetsReceived;
+                    report.bytesReceived = r.bytesReceived;
+                    report.jitter = r.jitter;
+                    report.packetsLost = r.packetsLost;
                 }
-                if (report.type === "outbound-rtp") {
-                    summary.packetsSent = report.packetsSent;
-                    summary.bytesSent = report.bytesSent;
+                if (r.type === "outbound-rtp" && !r.isRemote) {
+                    report.packetsSent = r.packetsSent;
+                    report.bytesSent = r.bytesSent;
                 }
             });
 
-            this.collectedStats.push({ ...summary });
-            await new Promise(res => setTimeout(res, intervalMs));
-        }
+            const now = Date.now();
 
-        return this.collectedStats;
+            if (this.lastTimestamp > 0) {
+                const timeDiff = (now - this.lastTimestamp) / 1000;
+
+                report.downloadBitrate =
+                    (report.bytesReceived - this.lastBytesReceived) * 8 / timeDiff;
+
+                report.uploadBitrate =
+                    (report.bytesSent - this.lastBytesSent) * 8 / timeDiff;
+            }
+
+            this.lastBytesReceived = report.bytesReceived || 0;
+            this.lastBytesSent = report.bytesSent || 0;
+            this.lastTimestamp = now;
+
+            this.collectedStats.push(report);
+
+            if (this.onUpdate) this.onUpdate(report);
+
+            setTimeout(loop, intervalMs);
+        };
+
+        loop();
     }
 
-    /**
-     * Download collected stats as CSV
-     */
+    stop() {
+        this.running = false;
+    }
+
     downloadCSV() {
         if (!this.collectedStats.length) return;
 
         const headers = Object.keys(this.collectedStats[0]);
-        const csvRows = [
-            headers.join(","),  // header
+        const rows = [
+            headers.join(","),
             ...this.collectedStats.map(stat => headers.map(h => stat[h] ?? 0).join(","))
         ];
 
-        const csvContent = csvRows.join("\n");
-        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-        const filename = `connection_metrics_${timestamp}.csv`;
-
-        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const blob = new Blob([rows.join("\n")], { type: "text/csv" });
         const link = document.createElement("a");
+
         link.href = URL.createObjectURL(blob);
-        link.download = filename;
-        document.body.appendChild(link);
+        link.download = "connection_metrics.csv";
         link.click();
-        document.body.removeChild(link);
     }
 }
