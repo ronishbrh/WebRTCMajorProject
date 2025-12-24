@@ -125,6 +125,7 @@ export async function verifyChallenge(publicKey, challenge, signature) {
 	// If publicKey is a string (base64), import it first
 	if (typeof publicKey === 'string') {
 		publicKey = await importECDSAPublicKey(publicKey);
+		console.log("publicKey string ho raixa hai")
 	}
 
 	const isValid = await crypto.subtle.verify(
@@ -135,8 +136,9 @@ export async function verifyChallenge(publicKey, challenge, signature) {
 		publicKey,
 		signature,
 		challenge
-	);
 
+	);
+	console.log(isValid)
 	return isValid; // true or false
 }
 

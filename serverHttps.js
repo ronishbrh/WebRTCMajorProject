@@ -1,10 +1,15 @@
+import fs from "fs";
+import https from "https";
 import { WebSocketServer } from "ws";
 
-const wss= new WebSocketServer({ port: 8080 });
+const server = https.createServer({
+  key: fs.readFileSync("./certs/key.pem"),
+  cert: fs.readFileSync("./certs/cert.pem"),
+});
 
-console.log("WebSocket signaling server running on ws://localhost:8080 or ws://0.0.0.0:8080");
+const wss = new WebSocketServer({ server });
 
-let clients = {}; // key = username, value = ws
+let clients = {};
 
 wss.on("connection", (ws) => {
   let username = null;
@@ -14,12 +19,11 @@ wss.on("connection", (ws) => {
 
     if (data.type === "register") {
       username = data.userName;
-      clients[data.userName] = ws;
-      console.log(`User registered: ${data.userName}`);
+      clients[username] = ws;
+      console.log(`User registered: ${username}`);
       return;
     }
 
-    //forwarding recipient
     const target = clients[data.to];
     if (!target) {
       console.warn(`Target user ${data.to} not connected`);
@@ -52,4 +56,9 @@ wss.on("connection", (ws) => {
       console.log(`User disconnected: ${username}`);
     }
   });
+});
+
+
+server.listen(8080, "0.0.0.0", () => {
+  console.log("Secure WebSocket server running");
 });
