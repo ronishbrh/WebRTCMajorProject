@@ -1,5 +1,5 @@
 - [ ] List input video sources. mobile ma fron and back camera ko laagi
-- [ ] QR
+- [x] QR
 - [ ] Handle renegotiation, retry call
 - [ ] Make the client PWA
 - [x] The camera indicator is still on after peer disconnects. Properly release resources. Camera is still on the peer who didn't hangup the call first
