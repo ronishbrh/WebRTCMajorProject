@@ -1,3 +1,4 @@
+import { useLocation } from "react-router-dom";
 import profileIcon from "../assets/userProfileGeneric.png";
 import { useUser } from "../utils/UserContext";
 
@@ -5,24 +6,25 @@ import { useUser } from "../utils/UserContext";
 
 export default function Navbar({ onHomeClick, onProfileClick, onContactClick}) {
   const {identity} = useUser();
+  const location = useLocation()
   return (
     <nav className="w-full bg-white shadow px-4 py-3 sm:px-6 sm:py-4 flex items-center justify-between">
       <div className="flex gap-x-8">
         <h1
-          className="text-xl sm:text-2xl font-semibold cursor-pointer"
+          className={`text-xl sm:text-2xl font-semibold cursor-pointer ${location.pathname==="/"?"text-blue-600 border-b-2 border-blue-600":"text-gray-800"}`}
           onClick={onHomeClick}
         >
           HOME
         </h1>
         <h1
-          className="text-xl sm:text-2xl font-semibold cursor-pointer"
+          className={`text-xl sm:text-2xl font-semibold cursor-pointer ${location.pathname==="/server"?"text-blue-600 border-b-2 border-blue-600":"text-gray-800"}`}
 
         >
           SERVER
         </h1>
 
         <h1
-          className="text-xl sm:text-2xl font-semibold cursor-pointer"
+          className={`text-xl sm:text-2xl font-semibold cursor-pointer ${location.pathname==="/contact"?"text-blue-600 border-b-2 border-blue-600":"text-gray-800"}`}
           onClick={onContactClick}
         >
           CONTACT

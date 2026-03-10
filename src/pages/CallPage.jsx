@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useUser } from "../utils/UserContext";
 import { arrayBufferToBase64, base64ToArrayBuffer, decryptAES, deriveSharedSecret, encryptAES, generateECDHKeys, importAESKey, importECDSAPublicKey, signChallenge, verifyChallenge } from "../utils/crypto";
 import ConnectionTester from "../utils/ConnectionTester";
+import { FiCamera, FiCameraOff, FiMic, FiMicOff, FiPhoneCall, FiSettings } from "react-icons/fi";
 
 // Resolution presets
 const RESOLUTIONS = {
@@ -503,7 +504,7 @@ export default function CallPage() {
 
 			ECDHKeyPair.current = await generateECDHKeys();
 
-			const ws = new WebSocket("ws://localhost:8080");
+			const ws = new WebSocket("wss://localhost:8080");
 			// const ws = new WebSocket("wss://192.168.1.239:8080");
 
 			wsRef.current = ws;
@@ -719,7 +720,7 @@ export default function CallPage() {
 				{/* End Call Notification */}
 				{showEndCallNotification && (
 					<div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 border-2 border-red-500 text-white px-8 py-6 rounded-lg shadow-2xl z-50 text-center">
-						<div className="text-4xl mb-3">📞</div>
+						<div className="text-4xl mb-3"><FiPhoneCall/></div>
 						<div className="text-lg font-semibold">Call Ended</div>
 						<div className="text-sm text-gray-400 mt-2">Remote user ended the call</div>
 					</div>
@@ -765,7 +766,7 @@ export default function CallPage() {
 							className={`p-3 rounded-full transition ${isAudioOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
 								}`}
 						>
-							<span className="text-xl">{isAudioOn ? "🎙️" : "🔇"}</span>
+							<span className="text-xl">{isAudioOn ? <FiMic /> : <FiMicOff/> }</span>
 						</button>
 
 						<button
@@ -773,7 +774,7 @@ export default function CallPage() {
 							className={`p-3 rounded-full transition ${isVideoOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
 								}`}
 						>
-							<span className="text-xl">{isVideoOn ? "🎥" : "📷"}</span>
+							<span className="text-xl">{isVideoOn ? <FiCamera/> : <FiCameraOff />}</span>
 						</button>
 
 						<button
@@ -781,7 +782,7 @@ export default function CallPage() {
 							className={`p-3 rounded-full ${showSettings ? "bg-blue-600" : "bg-gray-700 hover:bg-gray-600"
 								}`}
 						>
-							<span className="text-xl">⚙️</span>
+							<span className="text-xl"><FiSettings /></span>
 						</button>
 					</div>
 

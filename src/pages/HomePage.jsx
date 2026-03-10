@@ -37,7 +37,7 @@ export default function HomePage() {
     }
 
     registeredRef.current = false;
-    const ws = new WebSocket("ws://localhost:8080");
+    const ws = new WebSocket("wss://localhost:8080");
     // const ws = new WebSocket("wss://192.168.1.239:8080");
 
     ws.onopen = () => {
