@@ -160,6 +160,7 @@ export default function HomePage() {
         onHomeClick={() => navigate("/")}
         onProfileClick={() => navigate("/profile")}
         onContactClick={() => navigate("/contact")}
+        onServerClick={() => navigate("/server")}
       />
 
       <main className="p-4 sm:p-6 flex-1">

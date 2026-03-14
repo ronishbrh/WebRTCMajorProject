@@ -4,6 +4,7 @@ import CallPage from "./pages/CallPage";
 import ProfilePage from "./pages/ProfilePage";
 import ContactPage from "./pages/ContactPage";
 import LoginPage from "./pages/LoginPage";
+import ServerPage from "./pages/ServerPage";
 import { useNavigate } from "react-router-dom";
 import { useUser } from "./utils/UserContext";
 
@@ -32,6 +33,7 @@ export default function App() {
 				<Route path="/contact" element={<ContactPage />} />
 				
 				<Route path="/profile" element={<ProfilePage />} />
+				<Route path="/server" element={<ServerPage />} />
 			</Routes>
 		</div>
 	);

@@ -92,6 +92,9 @@ export class IdentityManager {
 			salt: Array.from(salt),
 			publicKey: keyPair.publicKey,
 			contacts: [],
+			stunServers: [],
+			turnServers: [],
+			signallingServers: []
 		});
 
 		console.log("User created");
@@ -186,6 +189,95 @@ export class IdentityManager {
 		});
 
 		return user;
+	}
+
+	async addStunServer(userName, stunUrl) {
+		const record = await this._getObject("keys", userName)
+		if (!record) throw new Error("User not found!")
+		record.stunServers = record.stunServers || []
+
+		if (!record.stunServers.includes(stunUrl)) {
+			record.stunServers.push(stunUrl)
+		}
+		await this._storeObject("keys", userName, record)
+	}
+
+	async getStunServers(userName) {
+		const record = await this._getObject("keys", userName)
+		if (!record) throw new Error("User not found!")
+		return record.stunServers || []
+	}
+
+	async deleteStunServer(userName, stunUrl) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		record.stunServers = (record.stunServers || []).filter(
+			(s) => s !== stunUrl
+		);
+
+		await this._storeObject("keys", userName, record);
+	}
+
+	async addTurnServer(userName, turnServer) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		record.turnServers = record.turnServers || [];
+
+		record.turnServers.push(turnServer);
+
+		await this._storeObject("keys", userName, record);
+	}
+
+	async getTurnServers(userName) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		return record.turnServers || [];
+	}
+
+	async addSignallingServer(userName, url) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		record.signallingServers = record.signallingServers || [];
+
+		if (!record.signallingServers.includes(url)) {
+			record.signallingServers.push(url);
+		}
+
+		await this._storeObject("keys", userName, record);
+	}
+
+	async getSignallingServers(userName) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		return record.signallingServers || [];
+	}
+
+	async deleteSignallingServer(userName, url) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		record.signallingServers =
+			(record.signallingServers || []).filter(s => s !== url);
+
+		await this._storeObject("keys", userName, record);
+	}
+
+	//active signaling server for user
+	async setActiveSignallingServer(userName, url) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+		record.activeSignallingServer = url;
+		await this._storeObject("keys", userName, record);
+	}
+
+	async getActiveSignallingServer(userName) {
+		const record = await this._getObject("keys", userName);
+		return record?.activeSignallingServer || null;
 	}
 
 

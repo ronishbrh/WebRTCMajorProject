@@ -4,7 +4,7 @@ import { useUser } from "../utils/UserContext";
 
 //const profileIcon = "https://via.placeholder.com/80";
 
-export default function Navbar({ onHomeClick, onProfileClick, onContactClick}) {
+export default function Navbar({ onHomeClick, onProfileClick, onContactClick, onServerClick}) {
   const {identity} = useUser();
   const location = useLocation()
   return (
@@ -18,7 +18,7 @@ export default function Navbar({ onHomeClick, onProfileClick, onContactClick}) {
         </h1>
         <h1
           className={`text-xl sm:text-2xl font-semibold cursor-pointer ${location.pathname==="/server"?"text-blue-600 border-b-2 border-blue-600":"text-gray-800"}`}
-
+          onClick={onServerClick}
         >
           SERVER
         </h1>
