@@ -4,6 +4,7 @@ import { useUser } from "../utils/UserContext";
 import { arrayBufferToBase64, base64ToArrayBuffer, decryptAES, deriveSharedSecret, encryptAES, generateECDHKeys, importAESKey, importECDSAPublicKey, signChallenge, verifyChallenge } from "../utils/crypto";
 import ConnectionTester from "../utils/ConnectionTester";
 import { FiCamera, FiCameraOff, FiMic, FiMicOff, FiPhoneCall, FiSettings } from "react-icons/fi";
+import { IdentityManager } from "../utils/IdentityManager";
 
 // Resolution presets
 const RESOLUTIONS = {
@@ -39,6 +40,7 @@ export default function CallPage() {
 	const ECDHKeyPair = useRef(null);
 	const AESKey = useRef(null);
 	const { identity } = useUser();
+	const identityManager = new IdentityManager()	
 
 	const navigate = useNavigate();
 
@@ -49,6 +51,12 @@ export default function CallPage() {
 	const [isCalling, setIsCalling] = useState(callInitiatedFromHome);
 	const [callAnswered, setCallAnswered] = useState(false);
 	const callTimeoutRef = useRef(null);
+
+
+
+	const stun = localStorage.getItem("activeStun") || "stun:stun.l.google.com:19302"
+
+	const [signalingServer, setSignalingServer] = useState(null);
 
 	// --------- PURE FUNCTION (no setState allowed here) ------
 	const requestMediaStream = async (resolutionKey) => {
@@ -425,6 +433,8 @@ export default function CallPage() {
 
 
 
+
+
 		const init = async () => {
 			const { stream, error } = await requestMediaStream("medium");
 
@@ -445,7 +455,7 @@ export default function CallPage() {
 
 			const pc = new RTCPeerConnection({
 				iceServers: [
-					{ urls: ["stun:stun.l.google.com:19302"] },
+					{ urls: stun },
 				],
 			});
 			pcRef.current = pc;
@@ -504,7 +514,7 @@ export default function CallPage() {
 
 			ECDHKeyPair.current = await generateECDHKeys();
 
-			const ws = new WebSocket("wss://localhost:8080");
+			const ws = new WebSocket(signalingServer);
 			// const ws = new WebSocket("wss://192.168.1.239:8080");
 
 			wsRef.current = ws;
@@ -568,12 +578,24 @@ export default function CallPage() {
 
 		init();
 
+		const loadServer = async () => {
+
+			if (!identity) return;
+
+			const server = await identityManager.getActiveSignallingServer(identity.userName);
+
+			setSignalingServer(server || "wss://localhost:8080");
+
+		};
+
+		loadServer();
+
 		return () => {
 			active = false;
 			cleanupMedia();
 
 		};
-	}, []);
+	}, [identity]);
 
 	const cancelCalling = () => {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -720,7 +742,7 @@ export default function CallPage() {
 				{/* End Call Notification */}
 				{showEndCallNotification && (
 					<div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 border-2 border-red-500 text-white px-8 py-6 rounded-lg shadow-2xl z-50 text-center">
-						<div className="text-4xl mb-3"><FiPhoneCall/></div>
+						<div className="text-4xl mb-3"><FiPhoneCall /></div>
 						<div className="text-lg font-semibold">Call Ended</div>
 						<div className="text-sm text-gray-400 mt-2">Remote user ended the call</div>
 					</div>
@@ -766,7 +788,7 @@ export default function CallPage() {
 							className={`p-3 rounded-full transition ${isAudioOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
 								}`}
 						>
-							<span className="text-xl">{isAudioOn ? <FiMic /> : <FiMicOff/> }</span>
+							<span className="text-xl">{isAudioOn ? <FiMic /> : <FiMicOff />}</span>
 						</button>
 
 						<button
@@ -774,7 +796,7 @@ export default function CallPage() {
 							className={`p-3 rounded-full transition ${isVideoOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
 								}`}
 						>
-							<span className="text-xl">{isVideoOn ? <FiCamera/> : <FiCameraOff />}</span>
+							<span className="text-xl">{isVideoOn ? <FiCamera /> : <FiCameraOff />}</span>
 						</button>
 
 						<button

@@ -106,6 +106,7 @@ export default function ProfilePage() {
       <Navbar
         onHomeClick={() => navigate("/")}
         onContactClick={() => navigate("/contact")}
+        onServerClick={() => navigate("/server")}
       />
 
       <main className="flex-1 p-4 sm:p-6">

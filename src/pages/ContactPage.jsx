@@ -118,6 +118,7 @@ export default function ContactPage() {
             <Navbar
                 onHomeClick={() => navigate("/")}
                 onProfileClick={() => navigate("/profile")}
+                onServerClick={() => navigate("/server")}
             />
 
             <main className="p-4 sm:p-6 flex-1 max-w-md mx-auto">
