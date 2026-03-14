@@ -10,15 +10,16 @@ const identityManager = new IdentityManager();
 export default function HomePage() {
   const navigate = useNavigate();
   const { identity } = useUser();
+
   const [contacts, setContacts] = useState([]);
   const [incomingCall, setIncomingCall] = useState(null);
+  const [signalingServer, setSignalingServer] = useState(null);
+
   const wsRef = useRef(null);
   const registeredRef = useRef(false);
   const contactsRef = useRef([]);
 
-
-  const [signalingServer, setSignalingServer] = useState(null);
-
+  /* ---------------- LOAD SIGNALING SERVER ---------------- */
   useEffect(() => {
     if (!identity) {
       navigate("/login");
@@ -26,40 +27,60 @@ export default function HomePage() {
     }
 
     const loadServer = async () => {
+      const server = await identityManager.getActiveSignallingServer(identity.userName);
 
-			if (!identity) return;
+      // fallback to Render server if none stored
+      const finalServer =
+        server || "wss://webrtc-signaling-server-up3e.onrender.com";
 
-			const server = await identityManager.getActiveSignallingServer(identity.userName);
+      console.log("Using signaling server:", finalServer);
+      setSignalingServer(finalServer);
+    };
 
-			setSignalingServer(server || "wss://localhost:8080");
+    loadServer();
+  }, [identity, navigate]);
 
-		};
-
-		loadServer();
+  /* ---------------- LOAD CONTACTS ---------------- */
+  useEffect(() => {
+    if (!identity) return;
 
     const loadContacts = async () => {
       const list = await identityManager.getContacts(identity.userName);
       setContacts(list);
-      contactsRef.current = list; 
+      contactsRef.current = list;
       console.log("Loaded contacts:", list);
     };
-    loadContacts();
 
-    // Only create WebSocket if we dont have
+    loadContacts();
+  }, [identity]);
+
+  /* ---------------- WEBSOCKET CONNECTION ---------------- */
+  useEffect(() => {
+    if (!identity || !signalingServer) return;
+
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       console.log("WebSocket already connected");
       return;
     }
 
+    console.log("Connecting to signaling server:", signalingServer);
+
     registeredRef.current = false;
     const ws = new WebSocket(signalingServer);
-    // const ws = new WebSocket("wss://192.168.1.239:8080");
 
     ws.onopen = () => {
+      console.log("WebSocket connected");
+
       if (!registeredRef.current) {
-        ws.send(JSON.stringify({ type: "register", userName: identity.userName }));
+        ws.send(
+          JSON.stringify({
+            type: "register",
+            userName: identity.userName,
+          })
+        );
+
         registeredRef.current = true;
-        console.log("WebSocket connected and registered on HomePage");
+        console.log("User registered on signaling server");
       }
     };
 
@@ -67,25 +88,30 @@ export default function HomePage() {
       const data = JSON.parse(msg.data);
       console.log("HomePage received:", data.type);
 
-      // Incoming call request
+      /* -------- Incoming Call -------- */
       if (data.type === "call-request") {
-        const contact = contactsRef.current.find(c => c.userName === data.from);
+        const contact = contactsRef.current.find(
+          (c) => c.userName === data.from
+        );
+
         if (!contact) {
-          console.error("Received call from unknown contact:", data.from);
-          alert(`Call from ${data.from} but they're not in your contacts! Please add them first.`);
-          // Send rejection
-          ws.send(JSON.stringify({
-            type: "call-declined",
-            from: identity.userName,
-            to: data.from,
-          }));
+          console.error("Call from unknown contact:", data.from);
+
+          ws.send(
+            JSON.stringify({
+              type: "call-declined",
+              from: identity.userName,
+              to: data.from,
+            })
+          );
+
           return;
         }
-        console.log("Incoming call from contact:", contact);
+
         setIncomingCall({ from: data.from, contact });
       }
 
-      // Call cancelled by caller
+      /* -------- Caller cancelled -------- */
       if (data.type === "call-cancelled") {
         if (incomingCall?.from === data.from) {
           setIncomingCall(null);
@@ -93,14 +119,19 @@ export default function HomePage() {
         }
       }
 
-      // Call declined by callee 
+      /* -------- Call declined -------- */
       if (data.type === "call-declined") {
         alert(`${data.from} declined your call.`);
       }
     };
 
     ws.onerror = (err) => {
-      console.error("WebSocket error on HomePage:", err);
+      console.error("WebSocket error:", err);
+    };
+
+    ws.onclose = () => {
+      console.log("WebSocket disconnected");
+      registeredRef.current = false;
     };
 
     wsRef.current = ws;
@@ -110,51 +141,55 @@ export default function HomePage() {
         ws.close();
       }
     };
-  }, [identity, navigate]); 
+  }, [identity, signalingServer]);
 
-  //---------------Caller ko lagi--------------------------
+  /* ---------------- CALL HANDLER ---------------- */
   const handleCall = async (contact) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       alert("Connection not ready. Please wait.");
       return;
     }
 
-    // Navigate to call page as caller
     navigate(`/call/${contact.userName}`, {
       state: {
         contact,
-        callInitiated: true, 
+        callInitiated: true,
       },
     });
   };
 
-  // Delete a contact
+  /* ---------------- DELETE CONTACT ---------------- */
   const handleDelete = async (contact) => {
     try {
-      await identityManager.deleteContact(identity.userName, contact.userName);
-      setContacts((prev) => prev.filter((c) => c.userName !== contact.userName));
+      await identityManager.deleteContact(
+        identity.userName,
+        contact.userName
+      );
+
+      setContacts((prev) =>
+        prev.filter((c) => c.userName !== contact.userName)
+      );
     } catch (err) {
       console.error("Failed to delete contact:", err);
-      alert("Failed to delete contact. Try again.");
+      alert("Failed to delete contact.");
     }
   };
 
-
-  //---------------Callee ko lagi------------------------------
-  const acceptCall = async () => {
+  /* ---------------- ACCEPT CALL ---------------- */
+  const acceptCall = () => {
     if (!incomingCall) return;
 
-    // Navigate to call page as callee
     navigate(`/call/${incomingCall.from}`, {
       state: {
         contact: incomingCall.contact,
-        incomingCall: true, // This marks us as the callee who accepted
+        incomingCall: true,
       },
     });
-    
+
     setIncomingCall(null);
   };
 
+  /* ---------------- REJECT CALL ---------------- */
   const rejectCall = () => {
     if (!incomingCall) return;
 
@@ -165,10 +200,11 @@ export default function HomePage() {
         to: incomingCall.from,
       })
     );
+
     setIncomingCall(null);
   };
-//-------------------------------------------------------------------
 
+  /* ---------------- UI ---------------- */
   return (
     <div className="w-full min-h-screen flex flex-col">
       <Navbar
@@ -205,12 +241,13 @@ export default function HomePage() {
         </div>
       </main>
 
-      {/* INCOMING CALL OVERLAY */}
+      {/* INCOMING CALL POPUP */}
       {incomingCall && (
         <div className="fixed inset-0 bg-black/70 flex flex-col items-center justify-center z-50">
           <h2 className="text-2xl text-white mb-4">
             Incoming call from {incomingCall.from}
           </h2>
+
           <div className="flex gap-4">
             <button
               className="px-6 py-3 bg-green-600 text-white rounded hover:bg-green-700"
@@ -218,6 +255,7 @@ export default function HomePage() {
             >
               Accept
             </button>
+
             <button
               className="px-6 py-3 bg-red-600 text-white rounded hover:bg-red-700"
               onClick={rejectCall}
