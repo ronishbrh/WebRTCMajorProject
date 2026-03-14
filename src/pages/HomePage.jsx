@@ -58,8 +58,8 @@ export default function HomePage() {
   useEffect(() => {
     if (!identity || !signalingServer) return;
 
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      console.log("WebSocket already connected");
+    if (wsRef.current) {
+      console.log("WebSocket already exists");
       return;
     }
 
@@ -137,9 +137,7 @@ export default function HomePage() {
     wsRef.current = ws;
 
     return () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
-      }
+      console.log("HomePage unmounted");
     };
   }, [identity, signalingServer]);
 

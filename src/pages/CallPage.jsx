@@ -40,7 +40,7 @@ export default function CallPage() {
 	const ECDHKeyPair = useRef(null);
 	const AESKey = useRef(null);
 	const { identity } = useUser();
-	const identityManager = new IdentityManager()	
+	const identityManager = new IdentityManager()
 
 	const navigate = useNavigate();
 
@@ -413,9 +413,27 @@ export default function CallPage() {
 		);
 	}
 
+	useEffect(() => {
+
+		const loadServer = async () => {
+			if (!identity) return;
+
+			const server = await identityManager.getActiveSignallingServer(identity.userName);
+
+			setSignalingServer(server || "wss://webrtc-signaling-server-up3e.onrender.com");
+		};
+
+		loadServer();
+
+	}, [identity]);
+
 	// --------- INITIAL STARTUP ---------
 	useEffect(() => {
 		let active = true;
+
+		if (!identity || !contact || !signalingServer) {
+			return;
+		}
 
 		if (!identity || !contact) {
 			console.error("Identity or contact isn't set", { identity, contact });
@@ -578,24 +596,13 @@ export default function CallPage() {
 
 		init();
 
-		const loadServer = async () => {
-
-			if (!identity) return;
-
-			const server = await identityManager.getActiveSignallingServer(identity.userName);
-
-			setSignalingServer(server || "wss://localhost:8080");
-
-		};
-
-		loadServer();
 
 		return () => {
 			active = false;
 			cleanupMedia();
 
 		};
-	}, [identity]);
+	}, [signalingServer]);
 
 	const cancelCalling = () => {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
