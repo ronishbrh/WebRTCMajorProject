@@ -1,21 +1,23 @@
-- [ ] List input video sources. mobile ma fron and back camera ko laagi
 - [x] QR
+- [x] Better QR.
 - [ ] Handle renegotiation, retry call
 - [ ] Make the client PWA
+- [ ] Improve UI for mobile screens.
 - [x] The camera indicator is still on after peer disconnects. Properly release resources. Camera is still on the peer who didn't hangup the call first
 - [x] UI improvement kun page ma xau tyo page ko button highlight
 - [x] Why use url in avatar in HomePage:58? OR Use the first letter of the userName as capital and show it in avatar
 - [ ] User ko data such as various server urls they entered is saved in indexedDB in plain text. encrypt it.
 - [ ] able to import/export account
 - [ ] List supported resolition. afaile arbitrary resolution set garne milne hoki number of supported resolution ho.
+- [ ] List front and rear cameras in mobile phones.
 
 # Before Presentation
 - [ ] Check combination between ISPs. Contact them if needed.
 - [ ] make direct P2P possible anyhow.
 - [ ] measure latency, bandwidth, connection establishment time with direct P2P and with TURN relay.
 - [ ] Multiple device bich call test garne within a LAN.
-- [ ] use https and wss between server and client
-- [ ] Host signaling server on a public backend server.
+- [x] Host signaling server on a public backend server.
+- [x] use https and wss between server and client
 - [ ] Implement authentication and security between signaling server and the clients.
 - [ ] User lai public key le chinne. even in server. Maile kasaiko key aru bata liye vane usko name ma afno marji le rakhna sakxu(e.g. vai, uncle). server ma name check garnu thik xaina. public key le nai user lai uniqely identify garne.
 - [x] Call aayo vanne indicator or page (only basic initially done)
