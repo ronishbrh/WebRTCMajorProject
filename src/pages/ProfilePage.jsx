@@ -1,207 +1,219 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { QRCodeCanvas } from "qrcode.react";
-import { FiCopy } from 'react-icons/fi';
+import { FiCopy } from "react-icons/fi";
 import { FaQrcode } from "react-icons/fa";
 
-import { IdentityManager } from '../utils/IdentityManager.js';
+import { IdentityManager } from "../utils/IdentityManager.js";
 import Navbar from "../components/Navbar.jsx";
 import { useUser } from "../utils/UserContext";
 import { exportECDSAPublicKey } from "../utils/crypto";
 
-
 import profileIcon from "../assets/userProfileGeneric.png";
 
-
 export default function ProfilePage() {
-    const navigate = useNavigate();
+  const navigate = useNavigate();
+  const { identity } = useUser();
+  const identityManager = new IdentityManager();
 
-    const { identity } = useUser();
-    const identityManager = new IdentityManager();
+  const [name, setName] = useState(identity?.userName);
+  const [pubKey, setPubKey] = useState("");
+  const [showQR, setShowQR] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMessage, setSavedMessage] = useState("");
 
-    const [name, setName] = useState(identity?.userName);
-    const [pubKey, setPubKey] = useState("");
-
-    const [showQR, setShowQR] = useState(false);
-    const qrRef = useRef();
-
-    const [saving, setSaving] = useState(false);
-    const [savedMessage, setSavedMessage] = useState("");
+  const qrRef = useRef();
 
 
-    const saveName = async () => {
-        if (!identity) return;
 
-        if (name.trim() === "" || name === identity.userName) return;
+  const saveName = async () => {
+    if (!identity || name.trim() === "" || name === identity.userName) return;
 
-        try {
-            setSaving(true);
+    try {
+      setSaving(true);
+      const updated = await identityManager.updateUsername(
+        identity.userName,
+        name
+      );
 
-            
-            
-            const updated = await identityManager.updateUsername(identity.userName, name);
-            setName(updated.userName);
+      setName(updated.userName);
+      identity.userName = name;
 
-            // Update in UserContext
-            identity.userName = name;
+      setSavedMessage("Username updated!");
+      setTimeout(() => setSavedMessage(""), 2000);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update username.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
-            setSavedMessage("Username updated!");
-            setTimeout(() => setSavedMessage(""), 2000);
+  const copyPublicKey = () => {
+    navigator.clipboard.writeText(pubKey);
+  };
 
-        } catch (err) {
-            console.log(err);
-            alert("Failed to update username.");
-        } finally {
-            setSaving(false);
-        }
+  const downloadQR = () => {
+    const canvas = qrRef.current.querySelector("canvas");
+    const pngUrl = canvas.toDataURL("image/png");
+
+    const link = document.createElement("a");
+    link.href = pngUrl;
+    link.download = "public_key_qr.png";
+    link.click();
+  };
+
+  const shareQR = async () => {
+    const canvas = qrRef.current.querySelector("canvas");
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+
+      const file = new File([blob], "public_key_qr.png", {
+        type: "image/png",
+      });
+
+      if (navigator.share) {
+        await navigator.share({
+          title: "My Public Key",
+          text: "Scan this QR code to add my public key.",
+          files: [file],
+        });
+      } else {
+        alert("Sharing not supported on this device");
+      }
+    });
+  };
+
+ 
+
+  useEffect(() => {
+    if (!identity) {
+      navigate("/");
+      return;
+    }
+
+    const loadKey = async () => {
+      const keyText = await exportECDSAPublicKey(identity.publicKey);
+      setPubKey(keyText);
     };
 
-    const copyPublicKey = () => {
-        navigator.clipboard.writeText(pubKey);
-
-    }
-
-    function downloadQR() {
-        const canvas = qrRef.current.querySelector("canvas");
-        const pngUrl = canvas.toDataURL("image/png");
-
-        const link = document.createElement("a");
-        link.href = pngUrl;
-        link.download = "public_key_qr.png";
-        link.click();
-    }
-
-    async function shareQR() {
-        const canvas = qrRef.current.querySelector("canvas");
-        canvas.toBlob(async (blob) => {
-            const file = new File([blob], "public_key_qr.png", { type: "image/png" });
-
-            if (navigator.share) {
-                await navigator.share({
-                    title: "My Public Key",
-                    text: "Scan this QR code to add my public key.",
-                    files: [file]
-                });
-            } else {
-                alert("Sharing not supported on this device");
-            }
-        });
-    }
+    loadKey();
+  }, [identity, navigate]);
 
 
-    useEffect(() => {
-        if (!identity) {
-            navigate("/");
-        } else {
-            const loadKey = async () => {
-                const keyText = await exportECDSAPublicKey(identity.publicKey);
-                setPubKey(keyText);
-            };
+  return (
+    <div className="w-full min-h-screen flex flex-col bg-gray-50">
+      <Navbar
+        onHomeClick={() => navigate("/")}
+        onContactClick={() => navigate("/contact")}
+      />
 
-            loadKey();
-        }
-    }, [identity, navigate]);
+      <main className="flex-1 p-4 sm:p-6">
+        <h2 className="text-2xl font-semibold mb-6 text-center sm:text-left">
+          User Profile
+        </h2>
 
-    return (
-        <div className="w-full min-h-screen flex flex-col">
-            <Navbar
-                onHomeClick={() => navigate("/")}
-                onContactClick={() => navigate("/contact")}
+        {/* Profile Card */}
+        <div className="bg-white rounded-xl shadow p-5 sm:p-6 max-w-4xl mx-auto">
+          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 sm:gap-10">
+            {/* Avatar */}
+            <img
+              src={profileIcon}
+              alt="profile"
+              className="w-32 h-32 sm:w-56 sm:h-56 rounded-full object-cover"
             />
 
+            {/* Details */}
+            <div className="flex flex-col w-full max-w-lg text-center sm:text-left">
+              <input
+                className="text-xl sm:text-2xl font-medium border-b border-gray-400 focus:outline-none text-center sm:text-left"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
 
-            <main className="p-4 sm:p-6 flex-x">
-                <h2 className="text-2xl font-semibold mb-4 ">User Profile</h2>
-                <div className="flex items-center gap-x-10">
+              {name !== identity?.userName && (
+                <button
+                  onClick={saveName}
+                  disabled={saving}
+                  className="mt-3 self-center sm:self-start bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
+                >
+                  {saving ? "Saving..." : "Save"}
+                </button>
+              )}
 
-                    <img
-                        src={profileIcon}
-                        alt="profile"
-                        className="w-59 h-59 sm:w-60 sm:h-60 rounded-full object-cover"
-                    />
+              {savedMessage && (
+                <p className="text-green-600 mt-2 text-sm">
+                  {savedMessage}
+                </p>
+              )}
 
-                    <div className="flex flex-col">
+              {/* Public Key */}
+              <div className="mt-5">
+                <p className="text-xs text-gray-500 mb-1">Public Key</p>
+                <p className="text-sm text-gray-700 break-all bg-gray-100 p-3 rounded-lg">
+                  {pubKey}
+                </p>
+              </div>
 
-                        <input
-                            className="text-2xl font-large border-b border-gray-400 focus:outline-none"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            autoFocus
-                        />
-
-                        {name !== identity?.userName && (
-                            <button
-                                onClick={saveName}
-                                disabled={saving}
-                                className="mt-2 w-fit bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400"
-                            >
-                                {saving ? "Saving..." : "Save"}
-                            </button>
-                        )}
-
-                        {savedMessage && (
-                            <p className="text-green-600 mt-2 text-sm">{savedMessage}</p>
-                        )}
-
-
-
-                        <p className="wrap-break-words text-sm  text-gray-500 ">{pubKey}</p>
-                        <div className="flex flex-row gap-4">
-                            <button onClick={copyPublicKey} className="text-gray-600 hover:text-black">
-                                <FiCopy size={20} />
-                            </button>
-                            <button onClick={() => setShowQR(true)} className="text-gray-600 hover:text-black">
-                                <FaQrcode size={20} />
-                            </button>
-                        </div>
-
-                    </div>
-                </div>
-
-            </main>
-
-            {showQR && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center px-4">
-                    <div className="bg-white p-6 rounded-lg shadow-xl text-center">
-                        <h3 className="text-lg font-semibold mb-3">Public Key QR Code</h3>
-
-                        <div ref={qrRef} className="p-4 bg-white rounded">
-                            <QRCodeCanvas value={pubKey} size={220} />
-                        </div>
-
-                        <div className="flex justify-between mt-4 gap-3">
-
-                            {/* Download button */}
-                            <button
-                                onClick={downloadQR}
-                                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-                            >
-                                Download
-                            </button>
-
-                            {/* Share button */}
-                            <button
-                                onClick={shareQR}
-                                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
-                            >
-                                Share
-                            </button>
-
-                            {/* Close */}
-                            <button
-                                onClick={() => setShowQR(false)}
-                                className="bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500"
-                            >
-                                Close
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
+              {/* Actions */}
+              <div className="flex justify-center sm:justify-start gap-6 mt-4">
+                <button
+                  onClick={copyPublicKey}
+                  className="text-gray-600 hover:text-black"
+                  title="Copy public key"
+                >
+                  <FiCopy size={22} />
+                </button>
+                <button
+                  onClick={() => setShowQR(true)}
+                  className="text-gray-600 hover:text-black"
+                  title="Show QR code"
+                >
+                  <FaQrcode size={22} />
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
+      </main>
 
+      {/* QR Modal */}
+      {showQR && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+          <div className="bg-white w-full max-w-sm p-5 rounded-xl shadow-xl text-center">
+            <h3 className="text-lg font-semibold mb-4">
+              Public Key QR Code
+            </h3>
 
-    );
+            <div ref={qrRef} className="flex justify-center mb-4">
+              <QRCodeCanvas value={pubKey} size={200} />
+            </div>
 
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={downloadQR}
+                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+              >
+                Download
+              </button>
+
+              <button
+                onClick={shareQR}
+                className="flex-1 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+              >
+                Share
+              </button>
+
+              <button
+                onClick={() => setShowQR(false)}
+                className="flex-1 bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

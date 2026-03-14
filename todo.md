@@ -1,9 +1,9 @@
 - [ ] List input video sources. mobile ma fron and back camera ko laagi
-- [ ] QR
+- [x] QR
 - [ ] Handle renegotiation, retry call
 - [ ] Make the client PWA
 - [x] The camera indicator is still on after peer disconnects. Properly release resources. Camera is still on the peer who didn't hangup the call first
-- [ ] UI improvement kun page ma xau tyo page ko button highlight
+- [x] UI improvement kun page ma xau tyo page ko button highlight
 - [x] Why use url in avatar in HomePage:58? OR Use the first letter of the userName as capital and show it in avatar
 - [ ] use https and wss between server and client
 
@@ -19,7 +19,7 @@
 - [x] display stats such as bandwidth, bitrate, quality if possible
 - [x] Login Page UI improvement. Account creation
 - [x] don't show Public key in navbar but rather in profile
-- [ ] After changing our name in the profile page update the DB key and value
+- [x] After changing our name in the profile page update the DB key and value
 - [ ] Multiple device bich call test garne within a LAN.
 
 # Extra stuffs done

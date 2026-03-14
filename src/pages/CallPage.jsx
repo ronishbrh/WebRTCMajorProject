@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useUser } from "../utils/UserContext";
 import { arrayBufferToBase64, base64ToArrayBuffer, decryptAES, deriveSharedSecret, encryptAES, generateECDHKeys, importAESKey, importECDSAPublicKey, signChallenge, verifyChallenge } from "../utils/crypto";
 import ConnectionTester from "../utils/ConnectionTester";
+import { FiCamera, FiCameraOff, FiMic, FiMicOff, FiPhoneCall, FiSettings } from "react-icons/fi";
 
 // Resolution presets
 const RESOLUTIONS = {
@@ -27,7 +28,7 @@ export default function CallPage() {
 	const [showSettings, setShowSettings] = useState(false);
 	const [resolution, setResolution] = useState("medium");
 	const [liveStats, setLiveStats] = useState({
-		downloadBitrate: 0, uploadBitrate: 0, jitter: 0, packetsLost: 0
+		downloadBitrate: 0, uploadBitrate: 0, jitter: 0, packetsLost: 0, rtt: "N/A"
 	});
 	const [hasRemoteStream, setHasRemoteStream] = useState(false);
 
@@ -117,7 +118,7 @@ export default function CallPage() {
 				clearTimeout(callTimeoutRef.current);
 				callTimeoutRef.current = null;
 			}
-			
+
 			setIsCalling(false);
 			setCallAnswered(true);
 			// Caller starts handshake when callee accepts
@@ -144,11 +145,12 @@ export default function CallPage() {
 			console.log("Received challenge1 from", message.from);
 			const rawECDH = base64ToArrayBuffer(message.publicKey);
 			const signature = base64ToArrayBuffer(message.signature);
-
+			console.log("Receive paxi run bhayo")
 			// Import contact's ECDSA public key if its a string
 			let contactPublicKey = contact.publicKey;
 			if (typeof contactPublicKey === 'string') {
 				contactPublicKey = await importECDSAPublicKey(contactPublicKey);
+				console.log("contactPublicKey string ho")
 			}
 
 			// console.log("Verifying challenge1 signature...");
@@ -232,7 +234,7 @@ export default function CallPage() {
 				const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
 				const aesKey = await importAESKey(sharedSecret);
 				AESKey.current = aesKey;
-		
+
 
 				// Flush pending ICE candidates
 				if (pendingIceCandidates.current.length > 0) {
@@ -274,7 +276,7 @@ export default function CallPage() {
 			const sdp = decoder.decode(SDPBuffer);
 
 			await pc.setRemoteDescription({ type: "offer", sdp });
-		
+
 
 			// Add queued ICE candidates
 			console.log(`Flushing ${pendingCandidates.current.length} queued ICE candidates`);
@@ -420,14 +422,18 @@ export default function CallPage() {
 		// 	incomingCall: incomingCallAccepted
 		// });
 
+
+
+
 		const init = async () => {
 			const { stream, error } = await requestMediaStream("medium");
 
 			if (!active) return;
 
 			if (error) {
-				setError(error);
+				setError(null);
 				return;
+
 			}
 
 			localStreamRef.current = stream;
@@ -469,7 +475,8 @@ export default function CallPage() {
 							downloadBitrate: Math.round(stats.downloadBitrate || 0),
 							uploadBitrate: Math.round(stats.uploadBitrate || 0),
 							jitter: stats.jitter?.toFixed(3),
-							packetsLost: stats.packetsLost
+							packetsLost: stats.packetsLost,
+							rtt: stats.rtt ? stats.rtt.toFixed(1) : null
 						});
 					});
 					tester.start(1000);
@@ -497,7 +504,9 @@ export default function CallPage() {
 
 			ECDHKeyPair.current = await generateECDHKeys();
 
-			const ws = new WebSocket("ws://localhost:8080");
+			const ws = new WebSocket("wss://localhost:8080");
+			// const ws = new WebSocket("wss://192.168.1.239:8080");
+
 			wsRef.current = ws;
 
 			ws.onopen = () => {
@@ -562,6 +571,7 @@ export default function CallPage() {
 		return () => {
 			active = false;
 			cleanupMedia();
+
 		};
 	}, []);
 
@@ -651,7 +661,8 @@ export default function CallPage() {
 	};
 
 	return (
-		<div className="w-[80%] h-[80%] border-2 flex flex-col bg-black overflow-hidden">
+		<div className="w-full max-w-[1200px] sm:max-w-[1400px] lg:aspect-auto lg:h-screen lg:max-w-screen aspect-video max-h-[80vh] lg:max-h-screen border-2 bg-black overflow-hidden mx-auto relative">
+
 			{/* CALLING overlay for caller */}
 			{isCalling && (
 				<div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-50">
@@ -662,7 +673,7 @@ export default function CallPage() {
 				</div>
 			)}
 
-			<div className="flex-1 relative text-white flex items-stretch">
+			<div className="absolute inset-0 text-white flex">
 				{/* Remote video */}
 				<div className="flex-1 flex items-center justify-center bg-gray-800 overflow-hidden">
 					<video
@@ -679,7 +690,8 @@ export default function CallPage() {
 				</div>
 
 				{/* Local video preview */}
-				<div className="absolute top-4 right-4 w-40 h-32 sm:w-48 sm:h-36 bg-gray-900 rounded-lg overflow-hidden border-2 border-gray-700 shadow-xl">
+				<div className="absolute top-3 right-3 w-28 h-20 sm:w-40 sm:h-32 bg-gray-900 rounded-lg overflow-hidden border shadow-xl">
+
 					<video
 						ref={localVideoRef}
 						autoPlay
@@ -708,7 +720,7 @@ export default function CallPage() {
 				{/* End Call Notification */}
 				{showEndCallNotification && (
 					<div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 border-2 border-red-500 text-white px-8 py-6 rounded-lg shadow-2xl z-50 text-center">
-						<div className="text-4xl mb-3">📞</div>
+						<div className="text-4xl mb-3"><FiPhoneCall/></div>
 						<div className="text-lg font-semibold">Call Ended</div>
 						<div className="text-sm text-gray-400 mt-2">Remote user ended the call</div>
 					</div>
@@ -754,7 +766,7 @@ export default function CallPage() {
 							className={`p-3 rounded-full transition ${isAudioOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
 								}`}
 						>
-							<span className="text-xl">{isAudioOn ? "🎙️" : "🔇"}</span>
+							<span className="text-xl">{isAudioOn ? <FiMic /> : <FiMicOff/> }</span>
 						</button>
 
 						<button
@@ -762,7 +774,7 @@ export default function CallPage() {
 							className={`p-3 rounded-full transition ${isVideoOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
 								}`}
 						>
-							<span className="text-xl">{isVideoOn ? "🎥" : "📷"}</span>
+							<span className="text-xl">{isVideoOn ? <FiCamera/> : <FiCameraOff />}</span>
 						</button>
 
 						<button
@@ -770,13 +782,14 @@ export default function CallPage() {
 							className={`p-3 rounded-full ${showSettings ? "bg-blue-600" : "bg-gray-700 hover:bg-gray-600"
 								}`}
 						>
-							<span className="text-xl">⚙️</span>
+							<span className="text-xl"><FiSettings /></span>
 						</button>
 					</div>
 
 					<div className="absolute bottom-4 left-4 bg-black/70 px-3 py-2 rounded text-xs text-green-300">
 						<div>⬇ Download: {liveStats.downloadBitrate} kbps</div>
 						<div>⬆ Upload: {liveStats.uploadBitrate} kbps</div>
+						<div>📶 Latency: {liveStats.rtt ? `${liveStats.rtt} ms` : 'N/A'}</div>
 						<div>Jitter: {liveStats.jitter} s</div>
 						<div>Lost: {liveStats.packetsLost}</div>
 					</div>

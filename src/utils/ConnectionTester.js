@@ -2,7 +2,7 @@
 export default class ConnectionTester {
     constructor(pc, onUpdate) {
         this.pc = pc;
-        this.onUpdate = onUpdate; 
+        this.onUpdate = onUpdate;
         this.collectedStats = [];
 
         this.lastBytesReceived = 0;
@@ -21,6 +21,9 @@ export default class ConnectionTester {
             const stats = await this.pc.getStats();
             let report = {};
 
+            let candidatePairRtt = null;
+            let remoteInboundRtt = null;
+
             stats.forEach(r => {
                 if (r.type === "inbound-rtp" && !r.isRemote) {
                     report.packetsReceived = r.packetsReceived;
@@ -32,7 +35,22 @@ export default class ConnectionTester {
                     report.packetsSent = r.packetsSent;
                     report.bytesSent = r.bytesSent;
                 }
+                if (r.type === "candidate-pair" && (r.state === "succeeded" || r.nominated)) {
+                    if (r.currentRoundTripTime !== undefined) {
+                        candidatePairRtt = r.currentRoundTripTime * 1000; 
+                    }
+                    report.availableOutgoingBitrate = r.availableOutgoingBitrate;
+                    report.availableIncomingBitrate = r.availableIncomingBitrate;
+                }
+
+                if (r.type === "remote-inbound-rtp") {
+                    if (r.roundTripTime !== undefined) {
+                        remoteInboundRtt = r.roundTripTime * 1000; 
+                    }
+                }
             });
+
+            report.rtt = candidatePairRtt !== null ? candidatePairRtt : remoteInboundRtt;
 
             const now = Date.now();
 

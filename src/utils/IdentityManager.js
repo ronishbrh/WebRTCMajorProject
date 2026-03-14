@@ -169,13 +169,21 @@ export class IdentityManager {
 		const user = await this._getObject("keys", oldName);
 		if (!user) throw new Error("User not found");
 
+		const db = await this._openDB()
+		const tx = db.transaction("keys", "readwrite")
+		const store = tx.objectStore("keys")
+
 
 		user.userName = newName;
 
-		// Move storage to new key
-		const data = JSON.stringify(user);
-		localStorage.removeItem(`user_${oldName}`);
-		localStorage.setItem(`user_${newName}`, data);
+		store.delete(oldName)
+		store.put(user, newName)
+
+
+		await new Promise((resolve, reject) => {
+			tx.oncomplete = resolve;
+			tx.onerror = () => reject(tx.error);
+		});
 
 		return user;
 	}
