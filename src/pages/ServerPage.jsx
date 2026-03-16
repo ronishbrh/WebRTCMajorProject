@@ -25,6 +25,7 @@ export default function ServerPage() {
             <Navbar
                 onHomeClick={() => navigate("/")}
                 onContactClick={() => navigate("/contact")}
+                onProfileClick={() => navigate("/profile")}
             />
 
             <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-6">

@@ -84,9 +84,9 @@ export default class ConnectionTester {
 
 	stop() {
 		this.running = false;
-		if(false){
+		
 			this.downloadCSV();
-		}
+		
 	}
 
 	downloadCSV() {

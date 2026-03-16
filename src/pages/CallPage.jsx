@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useUser } from "../utils/UserContext";
 import { arrayBufferToBase64, base64ToArrayBuffer, decryptAES, deriveSharedSecret, encryptAES, generateECDHKeys, importAESKey, importECDSAPublicKey, signChallenge, verifyChallenge } from "../utils/crypto";
 import ConnectionTester from "../utils/ConnectionTester";
+import { getIceServersConfig } from "../utils/meterredTurnServer";
 import { FiCamera, FiCameraOff, FiMic, FiMicOff, FiPhoneCall, FiSettings } from "react-icons/fi";
 import { IdentityManager } from "../utils/IdentityManager";
 
@@ -16,6 +17,7 @@ const RESOLUTIONS = {
 export default function CallPage() {
 	const location = useLocation();
 	const contact = location.state?.contact;
+	const signalingServer = location.state?.signalingServer; // ✅ Get from HomePage state
 
 	const localVideoRef = useRef(null);
 	const remoteVideoRef = useRef(null);
@@ -52,11 +54,7 @@ export default function CallPage() {
 	const [callAnswered, setCallAnswered] = useState(false);
 	const callTimeoutRef = useRef(null);
 
-
-
-	const stun = localStorage.getItem("activeStun") || "stun:stun.l.google.com:19302"
-
-	const [signalingServer, setSignalingServer] = useState(null);
+	//const stun = localStorage.getItem("activeStun") || "stun:stun.l.google.com:19302"
 
 	// --------- PURE FUNCTION (no setState allowed here) ------
 	const requestMediaStream = async (resolutionKey) => {
@@ -86,14 +84,12 @@ export default function CallPage() {
 			remoteStreamRef.current = null;
 		}
 		if (pcRef.current) {
-			if (pcRef.current._tester) {
-				pcRef.current._tester.stop();
-			}
+			if (pcRef.current._tester) pcRef.current._tester.stop();
 			pcRef.current.close();
 			pcRef.current = null;
 		}
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-			console.log("Disconnected sdfsdfsfewr");
+			console.log("Disconnected sdfsdfsfewr")
 			wsRef.current.close();
 			wsRef.current = null;
 		}
@@ -108,7 +104,6 @@ export default function CallPage() {
 		const pc = pcRef.current;
 
 		if (message.type === "call-cancelled") {
-			// console.log("Caller cancelled the call");
 			alert("Call was cancelled");
 			cleanupMedia();
 			navigate("/");
@@ -116,7 +111,6 @@ export default function CallPage() {
 		}
 
 		if (message.type === "call-declined") {
-			// console.log("Callee declined the call");
 			alert(`${contact.userName} declined the call`);
 			cleanupMedia();
 			navigate("/");
@@ -124,7 +118,6 @@ export default function CallPage() {
 		}
 
 		if (message.type === "call-accepted") {
-			// console.log("Call accepted by callee");
 			if (callTimeoutRef.current) {
 				clearTimeout(callTimeoutRef.current);
 				callTimeoutRef.current = null;
@@ -138,7 +131,6 @@ export default function CallPage() {
 
 		if (message.type === "join") {
 			// Callee receives join from caller then now start challenge flow
-			// console.log("Received join, starting challenge");
 			const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
 			const signature = await signChallenge(identity.privateKey, rawPubKey);
 			const msg = {
@@ -156,19 +148,15 @@ export default function CallPage() {
 			console.log("Received challenge1 from", message.from);
 			const rawECDH = base64ToArrayBuffer(message.publicKey);
 			const signature = base64ToArrayBuffer(message.signature);
-			console.log("Receive paxi run bhayo")
-			// Import contact's ECDSA public key if its a string
+
 			let contactPublicKey = contact.publicKey;
 			if (typeof contactPublicKey === 'string') {
 				contactPublicKey = await importECDSAPublicKey(contactPublicKey);
-				console.log("contactPublicKey string ho")
 			}
 
-			// console.log("Verifying challenge1 signature...");
 			const valid = await verifyChallenge(contactPublicKey, rawECDH, signature);
 
 			if (valid) {
-				// console.log("User verified - sending challenge2");
 				const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
 				const sig = await signChallenge(identity.privateKey, rawPubKey);
 				const msg = {
@@ -190,9 +178,8 @@ export default function CallPage() {
 				const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
 				const aesKey = await importAESKey(sharedSecret);
 				AESKey.current = aesKey;
-				// console.log("AES key derived");
 
-				// Flush pending ICE candidates now afterwe have AES key
+				// Flush pending ICE candidates now after we have AES key
 				if (pendingIceCandidates.current.length > 0) {
 					console.log(`Flushing ${pendingIceCandidates.current.length} pending ICE candidates`);
 					for (const candidate of pendingIceCandidates.current) {
@@ -210,27 +197,17 @@ export default function CallPage() {
 			const rawECDH = base64ToArrayBuffer(message.publicKey);
 			const signature = base64ToArrayBuffer(message.signature);
 
-			// console.log("DEBUG contact object:", contact);
-			// console.log("DEBUG contact.publicKey type:", typeof contact.publicKey);
-			// console.log("DEBUG contact.publicKey value:", contact.publicKey);
-
-			// Importing contact's ECDSA public key if its a string
 			let contactPublicKey = contact.publicKey;
 			if (typeof contactPublicKey === 'string') {
 				try {
 					contactPublicKey = await importECDSAPublicKey(contactPublicKey);
-					// console.log("Public key imported successfully, type:", typeof contactPublicKey);
 				} catch (error) {
 					console.error("Failed to import public key:", error);
 					return;
 				}
 			} else if (!contactPublicKey) {
-				// console.error("contact.publicKey is null or undefined!");
 				return;
-			} else {
-				console.log("Public key is already a CryptoKey object");
 			}
-
 
 			const valid = await verifyChallenge(contactPublicKey, rawECDH, signature);
 
@@ -245,7 +222,6 @@ export default function CallPage() {
 				const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
 				const aesKey = await importAESKey(sharedSecret);
 				AESKey.current = aesKey;
-
 
 				// Flush pending ICE candidates
 				if (pendingIceCandidates.current.length > 0) {
@@ -287,7 +263,6 @@ export default function CallPage() {
 			const sdp = decoder.decode(SDPBuffer);
 
 			await pc.setRemoteDescription({ type: "offer", sdp });
-
 
 			// Add queued ICE candidates
 			console.log(`Flushing ${pendingCandidates.current.length} queued ICE candidates`);
@@ -416,45 +391,17 @@ export default function CallPage() {
 		);
 	}
 
-	useEffect(() => {
-
-		const loadServer = async () => {
-			if (!identity) return;
-
-			const server = await identityManager.getActiveSignallingServer(identity.userName);
-
-			setSignalingServer(server || "wss://webrtc-signaling-server-up3e.onrender.com");
-		};
-
-		loadServer();
-
-	}, [identity]);
-
 	// --------- INITIAL STARTUP ---------
 	useEffect(() => {
 		let active = true;
 
 		if (!identity || !contact || !signalingServer) {
+			console.error("Missing required data:", { identity: !!identity, contact: !!contact, signalingServer: !!signalingServer });
+			if (!identity || !contact) {
+				navigate("/login");
+			}
 			return;
 		}
-
-		if (!identity || !contact) {
-			console.error("Identity or contact isn't set", { identity, contact });
-			navigate("/login");
-			return;
-		}
-
-		// console.log("CallPage initialized", {
-		// 	identity: identity.userName,
-		// 	contact: contact.userName,
-		// 	callInitiated: callInitiatedFromHome,
-		// 	incomingCall: incomingCallAccepted
-		// });
-
-
-
-
-
 
 		const init = async () => {
 			const { stream, error } = await requestMediaStream("medium");
@@ -462,9 +409,8 @@ export default function CallPage() {
 			if (!active) return;
 
 			if (error) {
-				setError(null);
+				setError(error);
 				return;
-
 			}
 
 			localStreamRef.current = stream;
@@ -474,38 +420,59 @@ export default function CallPage() {
 				localVideoRef.current.srcObject = stream;
 			}
 
-			const pc = new RTCPeerConnection({
-				iceServers: [
-					{ urls: stun },
-				],
-			});
+			// const pc = new RTCPeerConnection({
+			// 	iceServers: [
+			// 		{ urls: stun },
+			// 	],
+			// });
+			let manualTurnServers = []
+			try {
+				manualTurnServers = await identityManager.getTurnServers(identity.userName)
+				console.log("Manual TURN servers loaded:", manualTurnServers)
+			} catch (err) {
+				console.error("Failed to load manual turn servers: ", err)
+			}
+
+			// Get Metered + manual servers combined
+			let iceServersConfig = await getIceServersConfig(manualTurnServers)
+
+			// Add custom STUN server if exists
+			const customStun = localStorage.getItem("activeStun") || "stun:stun.l.google.com:19302"
+			if (customStun) {
+				iceServersConfig.iceServers.unshift({ urls: [customStun] })
+				console.log("Added custom STUN:", customStun)
+			}
+
+			console.log("ICE servers config:", iceServersConfig)
+
+			console.log("ICE serers config:", iceServersConfig)
+
+			const pc = new RTCPeerConnection(iceServersConfig)
 			pcRef.current = pc;
 
 			stream.getTracks().forEach((track) => {
-				// console.log("Adding local track to PC:", track.kind, track.enabled);
 				pc.addTrack(track, stream);
 			});
 
 			pc.ontrack = (event) => {
-				// console.log("Received remote track:", event.track.kind, "readyState:", event.track.readyState);
 				if (!remoteStreamRef.current) {
 					remoteStreamRef.current = new MediaStream();
 					remoteVideoRef.current.srcObject = remoteStreamRef.current;
 					console.log("Created new remote MediaStream");
 				}
 				remoteStreamRef.current.addTrack(event.track);
-				// console.log("Added track to remote stream. Total tracks:", remoteStreamRef.current.getTracks().length);
 				setHasRemoteStream(true);
 			};
 
 			pc.oniceconnectionstatechange = () => {
 				console.log("ICE Connection State:", pc.iceConnectionState);
-				const state = pc.iceConnectionState;
+				const state = pc.iceConnectionState
 				if (state === "connected") {
+
 					const tester = new ConnectionTester(pc, (stats) => {
 						setLiveStats({
-							downloadBitrate: (Math.round(stats.downloadBitrate || 0) / 8000).toFixed(1), // in kilobytes per sec
-							uploadBitrate: (Math.round(stats.uploadBitrate || 0) / 8000).toFixed(1),
+							downloadBitrate:(Math.round(stats.downloadBitrate || 0)/8000).toFixed(1),
+							uploadBitrate: (Math.round(stats.uploadBitrate || 0)/8000).toFixed(1),
 							jitter: stats.jitter?.toFixed(3),
 							packetsLost: stats.packetsLost,
 							rtt: stats.rtt ? stats.rtt.toFixed(1) : null
@@ -518,7 +485,10 @@ export default function CallPage() {
 
 			pc.onicecandidate = (event) => {
 				if (event.candidate) {
-					// console.log("Generated ICE candidate:", event.candidate.type);
+					console.log("ICE Candidate:", {
+						type: event.candidate.type,
+						candidate: event.candidate.candidate.substring(0, 50) + "..."
+					})
 					sendCandidate(event.candidate);
 				} else {
 					console.log("ICE gathering complete");
@@ -533,11 +503,11 @@ export default function CallPage() {
 				console.log("Signaling State:", pc.signalingState);
 			};
 
-
 			ECDHKeyPair.current = await generateECDHKeys();
 
+			//signaling server passed from HomePage
+			console.log("Connecting to signaling server:", signalingServer);
 			const ws = new WebSocket(signalingServer);
-			// const ws = new WebSocket("wss://192.168.1.239:8080");
 
 			wsRef.current = ws;
 
@@ -573,7 +543,7 @@ export default function CallPage() {
 					}, 30000);
 				}
 
-				// If callee: notify caller we accepted and start handshake
+				// If callee: notify caller we accepted
 				if (incomingCallAccepted) {
 					console.log("Sending call-accepted as callee");
 					setCallAnswered(true);
@@ -584,7 +554,6 @@ export default function CallPage() {
 							to: contact.userName,
 						})
 					);
-					// Callee waits for caller's "join" message
 				}
 			};
 
@@ -600,13 +569,11 @@ export default function CallPage() {
 
 		init();
 
-
 		return () => {
 			active = false;
 			cleanupMedia();
-
 		};
-	}, [signalingServer]);
+	}, [signalingServer, identity, contact, callInitiatedFromHome, incomingCallAccepted, navigate]);
 
 	const cancelCalling = () => {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {

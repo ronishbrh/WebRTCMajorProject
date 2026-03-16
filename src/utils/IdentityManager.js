@@ -137,6 +137,8 @@ export class IdentityManager {
 		return this._decrypt(record, aesKey);
 	}
 
+	// ============ CONTACT MANAGEMENT ============
+
 	// Add a contact for the given user
 	async addContact(userName, contact) {
 		const record = await this._getObject("keys", userName);
@@ -156,6 +158,7 @@ export class IdentityManager {
 		return record.contacts || [];
 	}
 
+	// Delete a contact
 	async deleteContact(userName, contactUserName) {
 		const record = await this._getObject("keys", userName);
 		if (!record) throw new Error("User not found");
@@ -167,6 +170,54 @@ export class IdentityManager {
 		await this._storeObject("keys", userName, record);
 	}
 
+	async updateContactSignalingServer(userName, contactUserName, serverURL) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		const contact = (record.contacts || []).find(c => c.userName === contactUserName);
+		if (!contact) throw new Error("Contact not found");
+
+		if (serverURL === null) {
+			// Remove server from contact
+			delete contact.signalingServerURL;
+		} else {
+			// Update/set server for contact
+			contact.signalingServerURL = serverURL;
+		}
+
+		await this._storeObject("keys", userName, record);
+		return contact;
+	}
+
+	// Get signaling server for a specific contact
+	async getContactSignalingServer(userName, contactUserName) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		const contact = (record.contacts || []).find(c => c.userName === contactUserName);
+		if (!contact) throw new Error("Contact not found");
+
+		return contact.signalingServerURL || null;
+	}
+
+	// Update other contact fields
+	async updateContact(userName, contactUserName, updates) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		const contactIndex = (record.contacts || []).findIndex(c => c.userName === contactUserName);
+		if (contactIndex === -1) throw new Error("Contact not found");
+
+		record.contacts[contactIndex] = {
+			...record.contacts[contactIndex],
+			...updates
+		};
+
+		await this._storeObject("keys", userName, record);
+		return record.contacts[contactIndex];
+	}
+
+	// ============ USERNAME MANAGEMENT ============
 
 	async updateUsername(oldName, newName) {
 		const user = await this._getObject("keys", oldName);
@@ -176,12 +227,10 @@ export class IdentityManager {
 		const tx = db.transaction("keys", "readwrite")
 		const store = tx.objectStore("keys")
 
-
 		user.userName = newName;
 
 		store.delete(oldName)
 		store.put(user, newName)
-
 
 		await new Promise((resolve, reject) => {
 			tx.oncomplete = resolve;
@@ -190,6 +239,8 @@ export class IdentityManager {
 
 		return user;
 	}
+
+	// ============ STUN SERVER MANAGEMENT ============
 
 	async addStunServer(userName, stunUrl) {
 		const record = await this._getObject("keys", userName)
@@ -219,6 +270,8 @@ export class IdentityManager {
 		await this._storeObject("keys", userName, record);
 	}
 
+	// ============ TURN SERVER MANAGEMENT ============
+
 	async addTurnServer(userName, turnServer) {
 		const record = await this._getObject("keys", userName);
 		if (!record) throw new Error("User not found");
@@ -237,14 +290,32 @@ export class IdentityManager {
 		return record.turnServers || [];
 	}
 
-	async addSignallingServer(userName, url) {
+	async deleteTurnServer(userName, serverUrl) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		record.turnServers = (record.turnServers || []).filter(
+			(s) => s.url !== serverUrl
+		);
+
+		await this._storeObject("keys", userName, record);
+	}
+
+	// ============ SIGNALLING SERVER MANAGEMENT ============
+
+	async addSignallingServer(userName, url, owner = "manual") {
 		const record = await this._getObject("keys", userName);
 		if (!record) throw new Error("User not found");
 
 		record.signallingServers = record.signallingServers || [];
 
-		if (!record.signallingServers.includes(url)) {
-			record.signallingServers.push(url);
+		const exists = record.signallingServers.find((server) => server.url === url)
+
+		if (!exists) {
+			record.signallingServers.push({
+				url,
+				owner
+			});
 		}
 
 		await this._storeObject("keys", userName, record);
@@ -262,12 +333,12 @@ export class IdentityManager {
 		if (!record) throw new Error("User not found");
 
 		record.signallingServers =
-			(record.signallingServers || []).filter(s => s !== url);
+			(record.signallingServers || []).filter(s => s.url !== url);
 
 		await this._storeObject("keys", userName, record);
 	}
 
-	//active signaling server for user
+	// Set active signaling server for user
 	async setActiveSignallingServer(userName, url) {
 		const record = await this._getObject("keys", userName);
 		if (!record) throw new Error("User not found");
@@ -275,10 +346,9 @@ export class IdentityManager {
 		await this._storeObject("keys", userName, record);
 	}
 
+	// Get active signaling server for user
 	async getActiveSignallingServer(userName) {
 		const record = await this._getObject("keys", userName);
 		return record?.activeSignallingServer || null;
 	}
-
-
 }

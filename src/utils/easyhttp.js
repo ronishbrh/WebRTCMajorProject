@@ -12,7 +12,6 @@ function parseServer(serverUrl) {
 	};
 }
 
-import https from "https";
 
 export function httpsRequest(serverUrl, path, method = "GET", data = null) {
 
@@ -122,7 +121,7 @@ export async function requestChallenge(serverUrl, publicKey) {
 	}
 }
 
-import crypto from "crypto";
+
 
 export async function getToken(serverUrl, publicKey, privateKey) {
 
@@ -153,7 +152,6 @@ export async function getToken(serverUrl, publicKey, privateKey) {
 	}
 }
 
-import WebSocket from "ws";
 
 export function connectWebSocket(serverUrl, token) {
 
