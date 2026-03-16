@@ -35,7 +35,7 @@ export default class ConnectionTester {
                     report.packetsSent = r.packetsSent;
                     report.bytesSent = r.bytesSent;
                 }
-                if (r.type === "candidate-pair" && (r.state === "succeeded" || r.nominated)) {
+				if (r.type === "candidate-pair" && r.nominated && r.state === "succeeded") {
                     if (r.currentRoundTripTime !== undefined) {
                         candidatePairRtt = r.currentRoundTripTime * 1000; 
                     }

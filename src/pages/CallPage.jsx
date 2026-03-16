@@ -500,8 +500,8 @@ export default function CallPage() {
 				if (pc.iceConnectionState === "connected") {
 					const tester = new ConnectionTester(pc, (stats) => {
 						setLiveStats({
-							downloadBitrate: Math.round(stats.downloadBitrate || 0),
-							uploadBitrate: Math.round(stats.uploadBitrate || 0),
+							downloadBitrate: (Math.round(stats.downloadBitrate || 0) / 1000).toFixed(1), // in kilobits per sec
+							uploadBitrate: (Math.round(stats.uploadBitrate || 0) / 1000).toFixed(1),
 							jitter: stats.jitter?.toFixed(3),
 							packetsLost: stats.packetsLost,
 							rtt: stats.rtt ? stats.rtt.toFixed(1) : null
