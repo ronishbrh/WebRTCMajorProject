@@ -2,8 +2,8 @@ export async function getMeterredTurnServers() {
   try {
     console.log('Fetching TURN credentials from backend...');
 
-    // const response = await fetch('/api/turn-credentials');
-    const response = await fetch('http://localhost:8080/api/turn-credentials');
+    const response = await fetch('/api/turn-credentials');
+    // const response = await fetch('http://localhost:8080/api/turn-credentials');
 
     console.log('Response status:', response.status);
     console.log('Response headers:', response.headers);
