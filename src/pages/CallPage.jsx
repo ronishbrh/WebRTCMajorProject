@@ -86,11 +86,14 @@ export default function CallPage() {
 			remoteStreamRef.current = null;
 		}
 		if (pcRef.current) {
-			if (pcRef.current._tester) pcRef.current._tester.stop();
+			if (pcRef.current._tester) {
+				pcRef.current._tester.stop();
+			}
 			pcRef.current.close();
 			pcRef.current = null;
 		}
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+			console.log("Disconnected sdfsdfsfewr");
 			wsRef.current.close();
 			wsRef.current = null;
 		}
@@ -497,11 +500,12 @@ export default function CallPage() {
 
 			pc.oniceconnectionstatechange = () => {
 				console.log("ICE Connection State:", pc.iceConnectionState);
-				if (pc.iceConnectionState === "connected") {
+				const state = pc.iceConnectionState;
+				if (state === "connected") {
 					const tester = new ConnectionTester(pc, (stats) => {
 						setLiveStats({
-							downloadBitrate: (Math.round(stats.downloadBitrate || 0) / 1000).toFixed(1), // in kilobits per sec
-							uploadBitrate: (Math.round(stats.uploadBitrate || 0) / 1000).toFixed(1),
+							downloadBitrate: (Math.round(stats.downloadBitrate || 0) / 8000).toFixed(1), // in kilobytes per sec
+							uploadBitrate: (Math.round(stats.uploadBitrate || 0) / 8000).toFixed(1),
 							jitter: stats.jitter?.toFixed(3),
 							packetsLost: stats.packetsLost,
 							rtt: stats.rtt ? stats.rtt.toFixed(1) : null
