@@ -17,7 +17,7 @@ const RESOLUTIONS = {
 export default function CallPage() {
 	const location = useLocation();
 	const contact = location.state?.contact;
-	const signalingServer = location.state?.signalingServer; // ✅ Get from HomePage state
+	const signalingServer = location.state?.signalingServer; 
 
 	const localVideoRef = useRef(null);
 	const remoteVideoRef = useRef(null);
@@ -112,14 +112,14 @@ export default function CallPage() {
 
 		if (message.type === "call-cancelled") {
 			alert("Call was cancelled");
-			cleanupMedia();
+			//cleanupMedia();
 			navigate("/");
 			return;
 		}
 
 		if (message.type === "call-declined") {
 			alert(`${contact.userName} declined the call`);
-			cleanupMedia();
+			//cleanupMedia();
 			navigate("/");
 			return;
 		}
@@ -357,7 +357,7 @@ export default function CallPage() {
 			console.log("Remote user ended call");
 			setShowEndCallNotification(true);
 			setTimeout(() => {
-				cleanupMedia();
+				//cleanupMedia();
 				navigate("/");
 			}, 3000);
 		}
@@ -689,8 +689,8 @@ export default function CallPage() {
 				</div>
 			)}
 
-			{/* DESKTOP LAYOUT (lg and above) */}
-			<div className="hidden lg:flex absolute inset-0 text-white">
+			{/* DESKTOP LAYOUT */}
+			<div className="hidden xl:flex absolute inset-0 text-white">
 				{/* Remote video */}
 				<div className="flex-1 flex items-center justify-center bg-gray-800 overflow-hidden">
 					<video
@@ -816,8 +816,8 @@ export default function CallPage() {
 				)}
 			</div>
 
-			{/* MOBILE LAYOUT (below lg) - Portrait optimized */}
-			<div className="flex lg:hidden flex-col w-full h-full text-white">
+			{/* MOBILE LAYOUT - Portrait optimized */}
+			<div className="flex xl:hidden flex-col w-full h-full text-white">
 				{/* Remote video - Full width, centered */}
 				<div className="flex-1 flex items-center justify-center bg-gray-800 overflow-hidden relative">
 					<video
@@ -867,7 +867,12 @@ export default function CallPage() {
 						<div>⬇ {liveStats.downloadBitrate} kbps</div>
 						<div>⬆ {liveStats.uploadBitrate} kbps</div>
 						<div>📶 {liveStats.rtt ? `${liveStats.rtt} ms` : 'N/A'}</div>
+						<div>Jitter: {liveStats.jitter * 1000} ms</div>
 						<div>Lost: {liveStats.packetsLost}</div>
+						<div>InFPS: {liveStats.inboundFPS}</div>
+						<div>OutFPS: {liveStats.outboundFPS}</div>
+						<div>OutResoultion: {liveStats.outboundResolutionWidth}x{liveStats.outboundResolutionHeight}</div>
+						<div>InResoultion: {liveStats.inboundResolutionWidth}x{liveStats.inboundResolutionHeight}</div>
 					</div>
 
 					{/* Settings panel - Mobile */}
