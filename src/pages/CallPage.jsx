@@ -125,6 +125,7 @@ export default function CallPage() {
 		}
 
 		if (message.type === "call-accepted") {
+			console.log("Call acceptance received at ", Date.now());
 			if (callTimeoutRef.current) {
 				clearTimeout(callTimeoutRef.current);
 				callTimeoutRef.current = null;
@@ -492,6 +493,7 @@ export default function CallPage() {
 							outboundResolutionHeight: stats.outboundResolutionHeight ? stats.outboundResolutionHeight : null,
 						});
 					});
+					console.log("Call established at ", Date.now());
 					tester.start(1000);
 					pcRef.current._tester = tester;
 				}

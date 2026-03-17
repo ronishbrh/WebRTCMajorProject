@@ -152,6 +152,7 @@ export default function HomePage() {
         }
 
         setIncomingCall({ from: data.from, contact });
+		console.log("Call request received at ", Date.now());
       }
 
       /* -------- Caller cancelled -------- */
@@ -190,6 +191,8 @@ export default function HomePage() {
       alert("Connection not ready. Please wait.");
       return;
     }
+
+	  console.log("Calling at ", Date.now());
 
     try {
       // Determine which server to use
@@ -298,6 +301,8 @@ export default function HomePage() {
   /* ---------------- ACCEPT CALL -------- */
   const acceptCall = async () => {
     if (!incomingCall) return;
+
+	  console.log("Accepting call at ", Date.now());
 
     try {
       const serverToUse = incomingCall.contact.signalingServerURL || signalingServer;
