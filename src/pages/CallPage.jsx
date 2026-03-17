@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useUser } from "../utils/UserContext";
 import { arrayBufferToBase64, base64ToArrayBuffer, decryptAES, deriveSharedSecret, encryptAES, generateECDHKeys, importAESKey, importECDSAPublicKey, signChallenge, verifyChallenge } from "../utils/crypto";
 import ConnectionTester from "../utils/ConnectionTester";
+import { getIceServersConfig } from "../utils/meterredTurnServer";
 import { FiCamera, FiCameraOff, FiMic, FiMicOff, FiPhoneCall, FiSettings } from "react-icons/fi";
 import { IdentityManager } from "../utils/IdentityManager";
 
@@ -16,6 +17,7 @@ const RESOLUTIONS = {
 export default function CallPage() {
 	const location = useLocation();
 	const contact = location.state?.contact;
+	const signalingServer = location.state?.signalingServer; // ✅ Get from HomePage state
 
 	const localVideoRef = useRef(null);
 	const remoteVideoRef = useRef(null);
@@ -52,11 +54,7 @@ export default function CallPage() {
 	const [callAnswered, setCallAnswered] = useState(false);
 	const callTimeoutRef = useRef(null);
 
-
-
-	const stun = localStorage.getItem("activeStun") || "stun:stun.l.google.com:19302"
-
-	const [signalingServer, setSignalingServer] = useState(null);
+	//const stun = localStorage.getItem("activeStun") || "stun:stun.l.google.com:19302"
 
 	// --------- PURE FUNCTION (no setState allowed here) ------
 	const requestMediaStream = async (resolutionKey) => {
@@ -86,14 +84,12 @@ export default function CallPage() {
 			remoteStreamRef.current = null;
 		}
 		if (pcRef.current) {
-			if (pcRef.current._tester) {
-				pcRef.current._tester.stop();
-			}
+			if (pcRef.current._tester) pcRef.current._tester.stop();
 			pcRef.current.close();
 			pcRef.current = null;
 		}
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-			console.log("Disconnected sdfsdfsfewr");
+			console.log("Disconnected sdfsdfsfewr")
 			wsRef.current.close();
 			wsRef.current = null;
 		}
@@ -108,7 +104,6 @@ export default function CallPage() {
 		const pc = pcRef.current;
 
 		if (message.type === "call-cancelled") {
-			// console.log("Caller cancelled the call");
 			alert("Call was cancelled");
 			cleanupMedia();
 			navigate("/");
@@ -116,7 +111,6 @@ export default function CallPage() {
 		}
 
 		if (message.type === "call-declined") {
-			// console.log("Callee declined the call");
 			alert(`${contact.userName} declined the call`);
 			cleanupMedia();
 			navigate("/");
@@ -124,7 +118,6 @@ export default function CallPage() {
 		}
 
 		if (message.type === "call-accepted") {
-			// console.log("Call accepted by callee");
 			if (callTimeoutRef.current) {
 				clearTimeout(callTimeoutRef.current);
 				callTimeoutRef.current = null;
@@ -138,7 +131,6 @@ export default function CallPage() {
 
 		if (message.type === "join") {
 			// Callee receives join from caller then now start challenge flow
-			// console.log("Received join, starting challenge");
 			const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
 			const signature = await signChallenge(identity.privateKey, rawPubKey);
 			const msg = {
@@ -156,19 +148,15 @@ export default function CallPage() {
 			console.log("Received challenge1 from", message.from);
 			const rawECDH = base64ToArrayBuffer(message.publicKey);
 			const signature = base64ToArrayBuffer(message.signature);
-			console.log("Receive paxi run bhayo")
-			// Import contact's ECDSA public key if its a string
+
 			let contactPublicKey = contact.publicKey;
 			if (typeof contactPublicKey === 'string') {
 				contactPublicKey = await importECDSAPublicKey(contactPublicKey);
-				console.log("contactPublicKey string ho")
 			}
 
-			// console.log("Verifying challenge1 signature...");
 			const valid = await verifyChallenge(contactPublicKey, rawECDH, signature);
 
 			if (valid) {
-				// console.log("User verified - sending challenge2");
 				const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
 				const sig = await signChallenge(identity.privateKey, rawPubKey);
 				const msg = {
@@ -190,9 +178,8 @@ export default function CallPage() {
 				const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
 				const aesKey = await importAESKey(sharedSecret);
 				AESKey.current = aesKey;
-				// console.log("AES key derived");
 
-				// Flush pending ICE candidates now afterwe have AES key
+				// Flush pending ICE candidates now after we have AES key
 				if (pendingIceCandidates.current.length > 0) {
 					console.log(`Flushing ${pendingIceCandidates.current.length} pending ICE candidates`);
 					for (const candidate of pendingIceCandidates.current) {
@@ -210,27 +197,17 @@ export default function CallPage() {
 			const rawECDH = base64ToArrayBuffer(message.publicKey);
 			const signature = base64ToArrayBuffer(message.signature);
 
-			// console.log("DEBUG contact object:", contact);
-			// console.log("DEBUG contact.publicKey type:", typeof contact.publicKey);
-			// console.log("DEBUG contact.publicKey value:", contact.publicKey);
-
-			// Importing contact's ECDSA public key if its a string
 			let contactPublicKey = contact.publicKey;
 			if (typeof contactPublicKey === 'string') {
 				try {
 					contactPublicKey = await importECDSAPublicKey(contactPublicKey);
-					// console.log("Public key imported successfully, type:", typeof contactPublicKey);
 				} catch (error) {
 					console.error("Failed to import public key:", error);
 					return;
 				}
 			} else if (!contactPublicKey) {
-				// console.error("contact.publicKey is null or undefined!");
 				return;
-			} else {
-				console.log("Public key is already a CryptoKey object");
 			}
-
 
 			const valid = await verifyChallenge(contactPublicKey, rawECDH, signature);
 
@@ -245,7 +222,6 @@ export default function CallPage() {
 				const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
 				const aesKey = await importAESKey(sharedSecret);
 				AESKey.current = aesKey;
-
 
 				// Flush pending ICE candidates
 				if (pendingIceCandidates.current.length > 0) {
@@ -287,7 +263,6 @@ export default function CallPage() {
 			const sdp = decoder.decode(SDPBuffer);
 
 			await pc.setRemoteDescription({ type: "offer", sdp });
-
 
 			// Add queued ICE candidates
 			console.log(`Flushing ${pendingCandidates.current.length} queued ICE candidates`);
@@ -416,45 +391,17 @@ export default function CallPage() {
 		);
 	}
 
-	useEffect(() => {
-
-		const loadServer = async () => {
-			if (!identity) return;
-
-			const server = await identityManager.getActiveSignallingServer(identity.userName);
-
-			setSignalingServer(server || "wss://webrtc-signaling-server-up3e.onrender.com");
-		};
-
-		loadServer();
-
-	}, [identity]);
-
 	// --------- INITIAL STARTUP ---------
 	useEffect(() => {
 		let active = true;
 
 		if (!identity || !contact || !signalingServer) {
+			console.error("Missing required data:", { identity: !!identity, contact: !!contact, signalingServer: !!signalingServer });
+			if (!identity || !contact) {
+				navigate("/login");
+			}
 			return;
 		}
-
-		if (!identity || !contact) {
-			console.error("Identity or contact isn't set", { identity, contact });
-			navigate("/login");
-			return;
-		}
-
-		// console.log("CallPage initialized", {
-		// 	identity: identity.userName,
-		// 	contact: contact.userName,
-		// 	callInitiated: callInitiatedFromHome,
-		// 	incomingCall: incomingCallAccepted
-		// });
-
-
-
-
-
 
 		const init = async () => {
 			const { stream, error } = await requestMediaStream("medium");
@@ -462,9 +409,8 @@ export default function CallPage() {
 			if (!active) return;
 
 			if (error) {
-				setError(null);
+				setError(error);
 				return;
-
 			}
 
 			localStreamRef.current = stream;
@@ -474,37 +420,58 @@ export default function CallPage() {
 				localVideoRef.current.srcObject = stream;
 			}
 
-			const pc = new RTCPeerConnection({
-				iceServers: [
-					{ urls: stun },
-				],
-			});
+			// const pc = new RTCPeerConnection({
+			// 	iceServers: [
+			// 		{ urls: stun },
+			// 	],
+			// });
+			let manualTurnServers = []
+			try {
+				manualTurnServers = await identityManager.getTurnServers(identity.userName)
+				console.log("Manual TURN servers loaded:", manualTurnServers)
+			} catch (err) {
+				console.error("Failed to load manual turn servers: ", err)
+			}
+
+			// Get Metered + manual servers combined
+			let iceServersConfig = await getIceServersConfig(manualTurnServers)
+
+			// Add custom STUN server if exists
+			const customStun = localStorage.getItem("activeStun") || "stun:stun.l.google.com:19302"
+			if (customStun) {
+				iceServersConfig.iceServers.unshift({ urls: [customStun] })
+				console.log("Added custom STUN:", customStun)
+			}
+
+			console.log("ICE servers config:", iceServersConfig)
+
+			console.log("ICE serers config:", iceServersConfig)
+
+			const pc = new RTCPeerConnection(iceServersConfig)
 			pcRef.current = pc;
 
 			stream.getTracks().forEach((track) => {
-				// console.log("Adding local track to PC:", track.kind, track.enabled);
 				pc.addTrack(track, stream);
 			});
 
 			pc.ontrack = (event) => {
-				// console.log("Received remote track:", event.track.kind, "readyState:", event.track.readyState);
 				if (!remoteStreamRef.current) {
 					remoteStreamRef.current = new MediaStream();
 					remoteVideoRef.current.srcObject = remoteStreamRef.current;
 					console.log("Created new remote MediaStream");
 				}
 				remoteStreamRef.current.addTrack(event.track);
-				// console.log("Added track to remote stream. Total tracks:", remoteStreamRef.current.getTracks().length);
 				setHasRemoteStream(true);
 			};
 
 			pc.oniceconnectionstatechange = () => {
 				console.log("ICE Connection State:", pc.iceConnectionState);
-				const state = pc.iceConnectionState;
+				const state = pc.iceConnectionState
 				if (state === "connected") {
+
 					const tester = new ConnectionTester(pc, (stats) => {
 						setLiveStats({
-							downloadBitrate: (Math.round(stats.downloadBitrate || 0) / 8000).toFixed(1), // in kilobytes per sec
+							downloadBitrate: (Math.round(stats.downloadBitrate || 0) / 8000).toFixed(1),
 							uploadBitrate: (Math.round(stats.uploadBitrate || 0) / 8000).toFixed(1),
 							jitter: stats.jitter?.toFixed(3),
 							packetsLost: stats.packetsLost,
@@ -518,7 +485,10 @@ export default function CallPage() {
 
 			pc.onicecandidate = (event) => {
 				if (event.candidate) {
-					// console.log("Generated ICE candidate:", event.candidate.type);
+					console.log("ICE Candidate:", {
+						type: event.candidate.type,
+						candidate: event.candidate.candidate.substring(0, 50) + "..."
+					})
 					sendCandidate(event.candidate);
 				} else {
 					console.log("ICE gathering complete");
@@ -533,11 +503,11 @@ export default function CallPage() {
 				console.log("Signaling State:", pc.signalingState);
 			};
 
-
 			ECDHKeyPair.current = await generateECDHKeys();
 
+			//signaling server passed from HomePage
+			console.log("Connecting to signaling server:", signalingServer);
 			const ws = new WebSocket(signalingServer);
-			// const ws = new WebSocket("wss://192.168.1.239:8080");
 
 			wsRef.current = ws;
 
@@ -573,7 +543,7 @@ export default function CallPage() {
 					}, 30000);
 				}
 
-				// If callee: notify caller we accepted and start handshake
+				// If callee: notify caller we accepted
 				if (incomingCallAccepted) {
 					console.log("Sending call-accepted as callee");
 					setCallAnswered(true);
@@ -584,7 +554,6 @@ export default function CallPage() {
 							to: contact.userName,
 						})
 					);
-					// Callee waits for caller's "join" message
 				}
 			};
 
@@ -600,13 +569,11 @@ export default function CallPage() {
 
 		init();
 
-
 		return () => {
 			active = false;
 			cleanupMedia();
-
 		};
-	}, [signalingServer]);
+	}, [signalingServer, identity, contact, callInitiatedFromHome, incomingCallAccepted, navigate]);
 
 	const cancelCalling = () => {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -694,7 +661,7 @@ export default function CallPage() {
 	};
 
 	return (
-		<div className="w-full max-w-[1200px] sm:max-w-[1400px] lg:aspect-auto lg:h-screen lg:max-w-screen aspect-video max-h-[80vh] lg:max-h-screen border-2 bg-black overflow-hidden mx-auto relative">
+		<div className="w-full h-screen bg-black overflow-hidden mx-auto relative flex flex-col lg:flex-row">
 
 			{/* CALLING overlay for caller */}
 			{isCalling && (
@@ -706,7 +673,8 @@ export default function CallPage() {
 				</div>
 			)}
 
-			<div className="absolute inset-0 text-white flex">
+			{/* DESKTOP LAYOUT (lg and above) */}
+			<div className="hidden lg:flex absolute inset-0 text-white">
 				{/* Remote video */}
 				<div className="flex-1 flex items-center justify-center bg-gray-800 overflow-hidden">
 					<video
@@ -723,8 +691,7 @@ export default function CallPage() {
 				</div>
 
 				{/* Local video preview */}
-				<div className="absolute top-3 right-3 w-28 h-20 sm:w-40 sm:h-32 bg-gray-900 rounded-lg overflow-hidden border shadow-xl">
-
+				<div className="absolute top-3 right-3 w-40 h-32 bg-gray-900 rounded-lg overflow-hidden border shadow-xl">
 					<video
 						ref={localVideoRef}
 						autoPlay
@@ -747,15 +714,6 @@ export default function CallPage() {
 				{error && (
 					<div className="absolute top-4 left-4 bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg max-w-md text-sm">
 						{error}
-					</div>
-				)}
-
-				{/* End Call Notification */}
-				{showEndCallNotification && (
-					<div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 border-2 border-red-500 text-white px-8 py-6 rounded-lg shadow-2xl z-50 text-center">
-						<div className="text-4xl mb-3"><FiPhoneCall /></div>
-						<div className="text-lg font-semibold">Call Ended</div>
-						<div className="text-sm text-gray-400 mt-2">Remote user ended the call</div>
 					</div>
 				)}
 
@@ -784,7 +742,7 @@ export default function CallPage() {
 					</div>
 				)}
 
-				{/* Bottom controls */}
+				{/* Bottom controls - Desktop */}
 				<div className="absolute bottom-6 left-0 right-0 flex justify-center gap-4">
 					<button
 						onClick={handleEndCall}
@@ -827,6 +785,135 @@ export default function CallPage() {
 						<div>Lost: {liveStats.packetsLost}</div>
 					</div>
 				</div>
+
+				{/* End Call Notification */}
+				{showEndCallNotification && (
+					<div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 border-2 border-red-500 text-white px-8 py-6 rounded-lg shadow-2xl z-50 text-center">
+						<div className="text-4xl mb-3"><FiPhoneCall /></div>
+						<div className="text-lg font-semibold">Call Ended</div>
+						<div className="text-sm text-gray-400 mt-2">Remote user ended the call</div>
+					</div>
+				)}
+			</div>
+
+			{/* MOBILE LAYOUT (below lg) - Portrait optimized */}
+			<div className="flex lg:hidden flex-col w-full h-full text-white">
+				{/* Remote video - Full width, centered */}
+				<div className="flex-1 flex items-center justify-center bg-gray-800 overflow-hidden relative">
+					<video
+						ref={remoteVideoRef}
+						autoPlay
+						playsInline
+						className="w-full h-full object-contain"
+					/>
+					{!hasRemoteStream && (
+						<p className="absolute text-base opacity-60 px-4 text-center">
+							Waiting for remote user...
+						</p>
+					)}
+
+					{/* Local video preview - Mobile version (smaller) */}
+					<div className="absolute top-2 right-2 w-24 h-20 bg-gray-900 rounded-lg overflow-hidden border border-gray-600 shadow-lg">
+						<video
+							ref={localVideoRef}
+							autoPlay
+							playsInline
+							muted
+							className="w-full h-full object-contain"
+							style={{ transform: "scaleX(-1)" }}
+						/>
+						{!isVideoOn && (
+							<div className="absolute inset-0 bg-gray-900 flex items-center justify-center">
+								<span className="text-2xl">👤</span>
+							</div>
+						)}
+						<div className="absolute bottom-0.5 left-0.5 bg-black bg-opacity-70 px-1 text-xs rounded">
+							{RESOLUTIONS[resolution].label}
+						</div>
+					</div>
+
+					{/* Error message */}
+					{error && (
+						<div className="absolute top-2 left-2 bg-red-600 text-white px-3 py-2 rounded-lg shadow-lg max-w-xs text-xs">
+							{error}
+						</div>
+					)}
+				</div>
+
+				{/* Bottom controls bar - Mobile */}
+				<div className="bg-black/90 px-4 py-3 flex flex-col gap-3">
+					{/* Connection metrics - Compact mobile version */}
+					<div className="bg-gray-800/60 px-3 py-2 rounded text-xs text-green-300 grid grid-cols-2 gap-2">
+						<div>⬇ {liveStats.downloadBitrate} kbps</div>
+						<div>⬆ {liveStats.uploadBitrate} kbps</div>
+						<div>📶 {liveStats.rtt ? `${liveStats.rtt} ms` : 'N/A'}</div>
+						<div>Lost: {liveStats.packetsLost}</div>
+					</div>
+
+					{/* Settings panel - Mobile */}
+					{showSettings && (
+						<div className="bg-gray-900 border border-gray-700 rounded-lg p-3">
+							<h3 className="text-xs font-semibold mb-2">Video Quality</h3>
+							<div className="space-y-1">
+								{Object.entries(RESOLUTIONS).map(([key, value]) => (
+									<button
+										key={key}
+										onClick={() => handleResolutionChange(key)}
+										className={`w-full px-2 py-1 rounded text-xs text-left ${resolution === key
+											? "bg-blue-600 text-white"
+											: "bg-gray-800 text-gray-300"
+											}`}
+									>
+										{value.label}
+									</button>
+								))}
+							</div>
+						</div>
+					)}
+
+					{/* Control buttons - Mobile */}
+					<div className="flex gap-2 justify-center">
+						<button
+							onClick={toggleAudio}
+							className={`flex-1 p-2 rounded-full transition text-sm font-medium ${isAudioOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
+								}`}
+						>
+							<span className="flex items-center justify-center">{isAudioOn ? <FiMic size={18} /> : <FiMicOff size={18} />}</span>
+						</button>
+
+						<button
+							onClick={toggleVideo}
+							className={`flex-1 p-2 rounded-full transition text-sm font-medium ${isVideoOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
+								}`}
+						>
+							<span className="flex items-center justify-center">{isVideoOn ? <FiCamera size={18} /> : <FiCameraOff size={18} />}</span>
+						</button>
+
+						<button
+							onClick={() => setShowSettings(!showSettings)}
+							className={`flex-1 p-2 rounded-full transition text-sm font-medium ${showSettings ? "bg-blue-600" : "bg-gray-700 hover:bg-gray-600"
+								}`}
+						>
+							<span className="flex items-center justify-center"><FiSettings size={18} /></span>
+						</button>
+
+						<button
+							onClick={handleEndCall}
+							className="flex-1 p-2 bg-red-600 hover:bg-red-700 rounded-full text-sm font-medium"
+						>
+							<span className="flex items-center justify-center"><FiPhoneCall size={18} /></span>
+						</button>
+					</div>
+				</div>
+
+				{/* End Call Notification */}
+				{showEndCallNotification && (
+					<div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 border-2 border-red-500 text-white px-6 py-4 rounded-lg shadow-2xl z-50 text-center">
+						<div className="text-3xl mb-2"><FiPhoneCall /></div>
+						<div className="text-base font-semibold">Call Ended</div>
+						<div className="text-xs text-gray-400 mt-1">Remote user ended the call</div>
+					</div>
+				)}
 			</div>
 		</div>
 	);
