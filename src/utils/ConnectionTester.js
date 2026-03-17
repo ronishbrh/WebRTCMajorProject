@@ -22,6 +22,7 @@ export default class ConnectionTester {
     this.activeCandidatePair = null;
     this.callStartTime = null;
     this.isP2P = null;
+    this._seenCandidateIds = new Set();
 
     // Privacy Metrics
     this.privacyMetrics = {
@@ -41,11 +42,29 @@ export default class ConnectionTester {
     const loop = async () => {
       if (!this.running) return;
 
-      const stats = await this.pc.getStats();
+      // Guard: PC may have been closed between the setTimeout firing and this tick
+      if (!this.pc || this.pc.signalingState === 'closed') {
+        this.running = false;
+        return;
+      }
+
+      let stats;
+      try {
+        stats = await this.pc.getStats();
+      } catch (e) {
+        // PC was closed mid-await — stop the loop silently
+        this.running = false;
+        return;
+      }
+
       let report = {};
       let candidatePairRtt = null;
       let remoteInboundRtt = null;
       let activeCandidateType = null;
+
+      // Build a lookup map so candidate-pair entries can resolve their local/remote IDs
+      const statsMap = new Map();
+      stats.forEach(r => statsMap.set(r.id, r));
 
       stats.forEach(r => {
         if (r.type === "inbound-rtp" && !r.isRemote) {
@@ -73,15 +92,18 @@ export default class ConnectionTester {
           report.availableOutgoingBitrate = r.availableOutgoingBitrate;
           report.availableIncomingBitrate = r.availableIncomingBitrate;
 
-          const localCandidate = r.localCandidate;
+          // r.localCandidateId / r.remoteCandidateId are ID strings — look them up
+          const localCandidate = statsMap.get(r.localCandidateId);
+          const remoteCandidate = statsMap.get(r.remoteCandidateId);
+
           if (localCandidate) {
-            activeCandidateType = localCandidate.type ?? "unknown";
+            activeCandidateType = localCandidate.candidateType ?? "unknown";
             this.activeCandidatePair = {
               type: activeCandidateType,
-              localAddress: localCandidate.address,
+              localAddress: localCandidate.address ?? localCandidate.ip,
               localPort: localCandidate.port,
-              remoteAddress: r.remoteCandidate?.address,
-              remotePort: r.remoteCandidate?.port,
+              remoteAddress: remoteCandidate?.address ?? remoteCandidate?.ip,
+              remotePort: remoteCandidate?.port,
               protocol: localCandidate.protocol,
               priority: localCandidate.priority
             };
@@ -108,6 +130,28 @@ export default class ConnectionTester {
         if (r.type === "remote-inbound-rtp") {
           if (r.roundTripTime !== undefined) {
             remoteInboundRtt = r.roundTripTime * 1000;
+          }
+        }
+
+        // Backfill ICE candidate counts from stats (handles the case where
+        // gathering completed before hookIceCandidates() was called)
+        if (r.type === "local-candidate") {
+          const type = r.candidateType ?? "unknown";
+          // Only count each candidate ID once across all ticks
+          if (!this._seenCandidateIds) this._seenCandidateIds = new Set();
+          if (!this._seenCandidateIds.has(r.id)) {
+            this._seenCandidateIds.add(r.id);
+            if (this.iceCandidates[type] !== undefined) {
+              this.iceCandidates[type]++;
+            } else {
+              this.iceCandidates.unknown++;
+            }
+            this.privacyMetrics.candidatesGenerated++;
+            if (type === 'host' || type === 'srflx') {
+              this.privacyMetrics.p2pCandidates++;
+            } else if (type === 'relay') {
+              this.privacyMetrics.turnCandidates++;
+            }
           }
         }
       });
@@ -140,7 +184,7 @@ export default class ConnectionTester {
 
       if (this.onUpdate) this.onUpdate(report);
 
-      setTimeout(loop, intervalMs);
+      if (this.running) setTimeout(loop, intervalMs);
     };
 
     loop();
@@ -358,6 +402,7 @@ export default class ConnectionTester {
     this.lastBytesSent = 0;
     this.lastTimestamp = 0;
     this.iceCandidates = { host: 0, srflx: 0, relay: 0, prflx: 0, unknown: 0 };
+    this._seenCandidateIds = new Set();
     this.privacyMetrics = {
       candidatesGenerated: 0,
       p2pCandidates: 0,
