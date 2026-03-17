@@ -31,7 +31,14 @@ export default function CallPage() {
 	const [showSettings, setShowSettings] = useState(false);
 	const [resolution, setResolution] = useState("medium");
 	const [liveStats, setLiveStats] = useState({
-		downloadBitrate: 0, uploadBitrate: 0, jitter: 0, packetsLost: 0, rtt: "N/A"
+		downloadBitrate: 0, uploadBitrate: 0, jitter: 0, packetsLost: 0, rtt: "N/A",
+		inboundFPS: 0,
+		inboundResolutionWidth: 0,
+		inboundResolutionHeight: 0,
+
+		outboundFPS: 0,
+		outboundResolutionWidth: 0,
+		outboundResolutionHeight: 0,
 	});
 	const [hasRemoteStream, setHasRemoteStream] = useState(false);
 
@@ -475,7 +482,14 @@ export default function CallPage() {
 							uploadBitrate: (Math.round(stats.uploadBitrate || 0) / 8000).toFixed(1),
 							jitter: stats.jitter?.toFixed(3),
 							packetsLost: stats.packetsLost,
-							rtt: stats.rtt ? stats.rtt.toFixed(1) : null
+							rtt: stats.rtt ? stats.rtt.toFixed(1) : null,
+							inboundFPS: stats.inboundFPS ? stats.inboundFPS : null,
+							inboundResolutionWidth: stats.inboundResolutionWidth ? stats.inboundResolutionWidth : null,
+							inboundResolutionHeight: stats.inboundResolutionHeight ? stats.inboundResolutionHeight : null,
+
+							outboundFPS: stats.outboundFPS ? stats.outboundFPS : null,
+							outboundResolutionWidth: stats.outboundResolutionWidth ? stats.outboundResolutionWidth : null,
+							outboundResolutionHeight: stats.outboundResolutionHeight ? stats.outboundResolutionHeight : null,
 						});
 					});
 					tester.start(1000);
@@ -783,6 +797,10 @@ export default function CallPage() {
 						<div>📶 Latency: {liveStats.rtt ? `${liveStats.rtt} ms` : 'N/A'}</div>
 						<div>Jitter: {liveStats.jitter} s</div>
 						<div>Lost: {liveStats.packetsLost}</div>
+						<div>InFPS: {liveStats.inboundFPS}</div>
+						<div>OutFPS: {liveStats.outboundFPS}</div>
+						<div>OutResoultion: {liveStats.outboundResolutionWidth}x{liveStats.outboundResolutionHeight}</div>
+						<div>InResoultion: {liveStats.inboundResolutionWidth}x{liveStats.inboundResolutionHeight}</div>
 					</div>
 				</div>
 

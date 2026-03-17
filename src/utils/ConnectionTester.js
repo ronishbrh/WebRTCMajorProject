@@ -59,12 +59,18 @@ export default class ConnectionTester {
           report.bytesReceived = r.bytesReceived;
           report.jitter = r.jitter;
           report.packetsLost = r.packetsLost;
+          report.inboundFPS = r.framesPerSecond;
+          report.inboundResolutionWidth = r.frameWidth;
+          report.inboundResolutionHeight = r.frameHeight;
         }
 
         // Outbound RTP stats
         if (r.type === "outbound-rtp" && !r.isRemote) {
           report.packetsSent = r.packetsSent;
           report.bytesSent = r.bytesSent;
+          report.outboundFPS = r.framesPerSecond
+          report.outboundResolutionWidth = r.frameWidth;
+          report.outboundResolutionHeight = r.frameHeight;
         }
 
         // Active candidate pair (NEW: Track which type is active)
