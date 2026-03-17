@@ -690,7 +690,7 @@ export default function CallPage() {
 			)}
 
 			{/* DESKTOP LAYOUT */}
-			<div className="hidden xl:flex absolute inset-0 text-white">
+			<div >
 				{/* Remote video */}
 				<div className="flex-1 flex items-center justify-center bg-gray-800 overflow-hidden">
 					<video
@@ -816,120 +816,7 @@ export default function CallPage() {
 				)}
 			</div>
 
-			{/* MOBILE LAYOUT - Portrait optimized */}
-			<div className="flex xl:hidden flex-col w-full h-full text-white">
-				{/* Remote video - Full width, centered */}
-				<div className="flex-1 flex items-center justify-center bg-gray-800 overflow-hidden relative">
-					<video
-						ref={remoteVideoRef}
-						autoPlay
-						playsInline
-						className="w-full h-full object-contain"
-					/>
-					{!hasRemoteStream && (
-						<p className="absolute text-base opacity-60 px-4 text-center">
-							Waiting for remote user...
-						</p>
-					)}
-
-					{/* Local video preview - Mobile version (smaller) */}
-					<div className="absolute top-2 right-2 w-24 h-20 bg-gray-900 rounded-lg overflow-hidden border border-gray-600 shadow-lg">
-						<video
-							ref={localVideoRef}
-							autoPlay
-							playsInline
-							muted
-							className="w-full h-full object-contain"
-							style={{ transform: "scaleX(-1)" }}
-						/>
-						{!isVideoOn && (
-							<div className="absolute inset-0 bg-gray-900 flex items-center justify-center">
-								<span className="text-2xl">👤</span>
-							</div>
-						)}
-						<div className="absolute bottom-0.5 left-0.5 bg-black bg-opacity-70 px-1 text-xs rounded">
-							{RESOLUTIONS[resolution].label}
-						</div>
-					</div>
-
-					{/* Error message */}
-					{error && (
-						<div className="absolute top-2 left-2 bg-red-600 text-white px-3 py-2 rounded-lg shadow-lg max-w-xs text-xs">
-							{error}
-						</div>
-					)}
-				</div>
-
-				{/* Bottom controls bar - Mobile */}
-				<div className="bg-black/90 px-4 py-3 flex flex-col gap-3">
-					{/* Connection metrics - Compact mobile version */}
-					<div className="bg-gray-800/60 px-3 py-2 rounded text-xs text-green-300 grid grid-cols-2 gap-2">
-						<div>⬇ {liveStats.downloadBitrate} kbps</div>
-						<div>⬆ {liveStats.uploadBitrate} kbps</div>
-						<div>📶 {liveStats.rtt ? `${liveStats.rtt} ms` : 'N/A'}</div>
-						<div>Jitter: {liveStats.jitter * 1000} ms</div>
-						<div>Lost: {liveStats.packetsLost}</div>
-						<div>InFPS: {liveStats.inboundFPS}</div>
-						<div>OutFPS: {liveStats.outboundFPS}</div>
-						<div>OutResoultion: {liveStats.outboundResolutionWidth}x{liveStats.outboundResolutionHeight}</div>
-						<div>InResoultion: {liveStats.inboundResolutionWidth}x{liveStats.inboundResolutionHeight}</div>
-					</div>
-
-					{/* Settings panel - Mobile */}
-					{showSettings && (
-						<div className="bg-gray-900 border border-gray-700 rounded-lg p-3">
-							<h3 className="text-xs font-semibold mb-2">Video Quality</h3>
-							<div className="space-y-1">
-								{Object.entries(RESOLUTIONS).map(([key, value]) => (
-									<button
-										key={key}
-										onClick={() => handleResolutionChange(key)}
-										className={`w-full px-2 py-1 rounded text-xs text-left ${resolution === key
-											? "bg-blue-600 text-white"
-											: "bg-gray-800 text-gray-300"
-											}`}
-									>
-										{value.label}
-									</button>
-								))}
-							</div>
-						</div>
-					)}
-
-					{/* Control buttons - Mobile */}
-					<div className="flex gap-2 justify-center">
-						<button
-							onClick={toggleAudio}
-							className={`flex-1 p-2 rounded-full transition text-sm font-medium ${isAudioOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
-								}`}
-						>
-							<span className="flex items-center justify-center">{isAudioOn ? <FiMic size={18} /> : <FiMicOff size={18} />}</span>
-						</button>
-
-						<button
-							onClick={toggleVideo}
-							className={`flex-1 p-2 rounded-full transition text-sm font-medium ${isVideoOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
-								}`}
-						>
-							<span className="flex items-center justify-center">{isVideoOn ? <FiCamera size={18} /> : <FiCameraOff size={18} />}</span>
-						</button>
-
-						<button
-							onClick={() => setShowSettings(!showSettings)}
-							className={`flex-1 p-2 rounded-full transition text-sm font-medium ${showSettings ? "bg-blue-600" : "bg-gray-700 hover:bg-gray-600"
-								}`}
-						>
-							<span className="flex items-center justify-center"><FiSettings size={18} /></span>
-						</button>
-
-						<button
-							onClick={handleEndCall}
-							className="flex-1 p-2 bg-red-600 hover:bg-red-700 rounded-full text-sm font-medium"
-						>
-							<span className="flex items-center justify-center"><FiPhoneCall size={18} /></span>
-						</button>
-					</div>
-				</div>
+		
 
 				{/* End Call Notification */}
 				{showEndCallNotification && (
