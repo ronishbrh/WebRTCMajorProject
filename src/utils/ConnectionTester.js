@@ -1,5 +1,5 @@
 export default class ConnectionTester {
-  constructor(pc, onUpdate) {
+  constructor(pc, onUpdate, verbose = false) {
     this.pc = pc;
     this.onUpdate = onUpdate;
     this.collectedStats = [];
@@ -8,39 +8,35 @@ export default class ConnectionTester {
     this.lastTimestamp = 0;
     this.running = false;
     this.headers = new Set();
+    this.verbose = verbose;
 
-    // ICE Candidate Tracking (NEW)
+    // ICE Candidate Tracking
     this.iceCandidates = {
       host: 0,
-      srflx: 0,      // Server Reflexive (Hole Punching)
-      relay: 0,      // TURN
-      prflx: 0,      // Peer Reflexive
+      srflx: 0,
+      relay: 0,
+      prflx: 0,
       unknown: 0
     };
 
-    this.activeCandidatePair = null; // Track which type is being used
+    this.activeCandidatePair = null; 
     this.callStartTime = null;
-    this.isP2P = null; // true = P2P, false = TURN
+    this.isP2P = null;
 
-    // Privacy Metrics (NEW)
+    // Privacy Metrics
     this.privacyMetrics = {
       candidatesGenerated: 0,
       p2pCandidates: 0,
       turnCandidates: 0,
       activeCandidateType: null,
-      connectionMethod: null // 'direct', 'hole-punch', 'relay'
+      connectionMethod: null
     };
   }
 
-  /**
-   * Start monitoring connection stats
-   * Also hooks into ICE candidate events
-   */
+  // Start monitoring connection stats
   start(intervalMs = 1000) {
     this.running = true;
     this.callStartTime = Date.now();
-
-    // Hook into ICE candidate generation (NEW)
     this.hookIceCandidates();
 
     const loop = async () => {
@@ -53,27 +49,24 @@ export default class ConnectionTester {
       let activeCandidateType = null;
 
       stats.forEach(r => {
-        // Inbound RTP stats
         if (r.type === "inbound-rtp" && !r.isRemote) {
           report.packetsReceived = r.packetsReceived;
           report.bytesReceived = r.bytesReceived;
           report.jitter = r.jitter;
           report.packetsLost = r.packetsLost;
-          report.inboundFPS = r.framesPerSecond;
-          report.inboundResolutionWidth = r.frameWidth;
-          report.inboundResolutionHeight = r.frameHeight;
+          report.inboundFPS = r.framesPerSecond ?? 0;
+          report.inboundResolutionWidth = r.frameWidth ?? 0;
+          report.inboundResolutionHeight = r.frameHeight ?? 0;
         }
 
-        // Outbound RTP stats
         if (r.type === "outbound-rtp" && !r.isRemote) {
           report.packetsSent = r.packetsSent;
           report.bytesSent = r.bytesSent;
-          report.outboundFPS = r.framesPerSecond
-          report.outboundResolutionWidth = r.frameWidth;
-          report.outboundResolutionHeight = r.frameHeight;
+          report.outboundFPS = r.framesPerSecond ?? 0;
+          report.outboundResolutionWidth = r.frameWidth ?? 0;
+          report.outboundResolutionHeight = r.frameHeight ?? 0;
         }
 
-        // Active candidate pair (NEW: Track which type is active)
         if (r.type === "candidate-pair" && r.nominated && r.state === "succeeded") {
           if (r.currentRoundTripTime !== undefined) {
             candidatePairRtt = r.currentRoundTripTime * 1000;
@@ -81,10 +74,9 @@ export default class ConnectionTester {
           report.availableOutgoingBitrate = r.availableOutgoingBitrate;
           report.availableIncomingBitrate = r.availableIncomingBitrate;
 
-          // NEW: Track active candidate type
           const localCandidate = r.localCandidate;
           if (localCandidate) {
-            activeCandidateType = localCandidate.type; // 'host', 'srflx', 'relay', 'prflx'
+            activeCandidateType = localCandidate.type ?? "unknown";
             this.activeCandidatePair = {
               type: activeCandidateType,
               localAddress: localCandidate.address,
@@ -115,7 +107,6 @@ export default class ConnectionTester {
           }
         }
 
-        // Remote inbound RTP (for RTT measurement)
         if (r.type === "remote-inbound-rtp") {
           if (r.roundTripTime !== undefined) {
             remoteInboundRtt = r.roundTripTime * 1000;
@@ -123,17 +114,15 @@ export default class ConnectionTester {
         }
       });
 
-      // Finalize report
       report.rtt = candidatePairRtt !== null ? candidatePairRtt : remoteInboundRtt;
 
-      // NEW: Add ICE candidate info to report
       if (activeCandidateType) {
         report.iceCandidateType = activeCandidateType;
         report.isP2P = this.isP2P;
         report.p2pStatus = this.isP2P ? '✅ P2P' : '❌ TURN Relay';
       }
 
-      // Calculate bitrate
+      // Bitrate calculation
       const now = Date.now();
       report.timestamp = now;
 
@@ -149,11 +138,9 @@ export default class ConnectionTester {
       this.lastBytesSent = report.bytesSent || 0;
       this.lastTimestamp = now;
 
-      // Store stats
       this.collectedStats.push(report);
       Object.keys(report).forEach(k => this.headers.add(k));
 
-      // Callback
       if (this.onUpdate) this.onUpdate(report);
 
       setTimeout(loop, intervalMs);
@@ -162,48 +149,40 @@ export default class ConnectionTester {
     loop();
   }
 
-  /**
-   * Hook into ICE candidate events (NEW)
-   * Track all candidates generated during the connection
-   */
+  // Hook into ICE candidate events
   hookIceCandidates() {
-    // Store original handler
     const originalOnicecandidate = this.pc.onicecandidate;
 
-    // Override with our tracking
     this.pc.onicecandidate = (event) => {
       if (event.candidate) {
-        const type = event.candidate.type;
+        const type = event.candidate.type ?? "unknown";
+        if (!this.iceCandidates[type]) this.iceCandidates[type] = 0;
         this.iceCandidates[type]++;
         this.privacyMetrics.candidatesGenerated++;
 
-        // Count P2P vs TURN
         if (type === 'host' || type === 'srflx') {
           this.privacyMetrics.p2pCandidates++;
         } else if (type === 'relay') {
           this.privacyMetrics.turnCandidates++;
         }
 
-        console.log(`🎯 ICE Candidate: ${type}`, {
-          address: event.candidate.address,
-          port: event.candidate.port,
-          protocol: event.candidate.protocol,
-          priority: event.candidate.priority,
-          total_candidates: this.privacyMetrics.candidatesGenerated
-        });
+        if (this.verbose) {
+          console.log(`🎯 ICE Candidate: ${type}`, {
+            address: event.candidate.address,
+            port: event.candidate.port,
+            protocol: event.candidate.protocol,
+            priority: event.candidate.priority,
+            total_candidates: this.privacyMetrics.candidatesGenerated
+          });
+        }
       }
 
-      // Call original if it existed
       if (originalOnicecandidate) {
         originalOnicecandidate.call(this.pc, event);
       }
     };
   }
 
-  /**
-   * Get P2P success rate (NEW)
-   * Calculate percentage of P2P vs TURN usage
-   */
   getP2PSuccessRate() {
     const total = this.privacyMetrics.candidatesGenerated;
     if (total === 0) return null;
@@ -220,9 +199,6 @@ export default class ConnectionTester {
     };
   }
 
-  /**
-   * Get privacy metrics (NEW)
-   */
   getPrivacyMetrics() {
     const callDuration = this.callStartTime
       ? ((Date.now() - this.callStartTime) / 1000).toFixed(1)
@@ -238,9 +214,6 @@ export default class ConnectionTester {
     };
   }
 
-  /**
-   * Log privacy report to console (NEW)
-   */
   logPrivacyReport() {
     const metrics = this.getPrivacyMetrics();
     const p2pStats = metrics.p2pSuccessRate;
@@ -254,9 +227,9 @@ export default class ConnectionTester {
  CALL DURATION: ${metrics.callDuration}
 
  P2P SUCCESS RATE:
-  ├─ P2P Connections: ${p2pStats.p2pPercentage}% (${p2pStats.p2pCandidates} candidates)
-  ├─ TURN Relay: ${p2pStats.turnPercentage}% (${p2pStats.turnCandidates} candidates)
-  └─ Total Candidates: ${p2pStats.totalCandidates}
+  ├─ P2P Connections: ${p2pStats?.p2pPercentage ?? '0'}% (${p2pStats?.p2pCandidates ?? 0} candidates)
+  ├─ TURN Relay: ${p2pStats?.turnPercentage ?? '0'}% (${p2pStats?.turnCandidates ?? 0} candidates)
+  └─ Total Candidates: ${p2pStats?.totalCandidates ?? 0}
 
  ICE CANDIDATE BREAKDOWN:
   ├─ Host (Direct LAN): ${this.iceCandidates.host}
@@ -267,49 +240,39 @@ export default class ConnectionTester {
 
  ACTIVE CANDIDATE PAIR:
   ├─ Type: ${this.activeCandidatePair?.type || 'N/A'}
-  ├─ Local: ${this.activeCandidatePair?.localAddress}:${this.activeCandidatePair?.localPort}
-  ├─ Remote: ${this.activeCandidatePair?.remoteAddress}:${this.activeCandidatePair?.remotePort}
+  ├─ Local: ${this.activeCandidatePair?.localAddress || 'N/A'}:${this.activeCandidatePair?.localPort || 'N/A'}
+  ├─ Remote: ${this.activeCandidatePair?.remoteAddress || 'N/A'}:${this.activeCandidatePair?.remotePort || 'N/A'}
   ├─ Protocol: ${this.activeCandidatePair?.protocol || 'N/A'}
   └─ Priority: ${this.activeCandidatePair?.priority || 'N/A'}
 
  PRIVACY STATUS:
-  ${p2pStats.p2pPercentage >= 70 ? '✅ EXCELLENT' : p2pStats.p2pPercentage >= 50 ? '⚠️ GOOD' : '❌ POOR'}: ${p2pStats.p2pPercentage}% P2P connections
+  ${p2pStats?.p2pPercentage >= 70 ? '✅ EXCELLENT' : p2pStats?.p2pPercentage >= 50 ? '⚠️ GOOD' : '❌ POOR'}: ${p2pStats?.p2pPercentage ?? '0'}% P2P connections
   ${this.isP2P === true ? '✅ Currently using P2P connection' : this.isP2P === false ? '⚠️ Currently relying on TURN' : '⏳ Connection establishing...'}
 
 ╔════════════════════════════════════════════════════════════╗
     `);
   }
 
-  /**
-   * Stop monitoring and download CSV (enhanced) (MODIFIED)
-   */
   stop() {
     this.running = false;
-
-    // Log privacy report before downloading
     this.logPrivacyReport();
-
     this.downloadCSV();
   }
 
-  /**
-   * Download stats as CSV (enhanced) (MODIFIED)
-   */
   downloadCSV() {
     if (!this.collectedStats.length) {
       console.log('No stats collected yet');
       return;
     }
 
-    // Add privacy metrics as metadata at the top
     const privacyMetrics = this.getPrivacyMetrics();
     const metadataLines = [
       '# PRIVACY & P2P METRICS REPORT',
       `# Connection Method,${privacyMetrics.connectionMethod || 'N/A'}`,
       `# Call Duration,${privacyMetrics.callDuration}`,
-      `# P2P Success Rate,${privacyMetrics.p2pSuccessRate.p2pPercentage}%`,
-      `# TURN Usage Rate,${privacyMetrics.p2pSuccessRate.turnPercentage}%`,
-      `# Total Candidates Generated,${privacyMetrics.p2pSuccessRate.totalCandidates}`,
+      `# P2P Success Rate,${privacyMetrics.p2pSuccessRate?.p2pPercentage ?? 0}%`,
+      `# TURN Usage Rate,${privacyMetrics.p2pSuccessRate?.turnPercentage ?? 0}%`,
+      `# Total Candidates Generated,${privacyMetrics.p2pSuccessRate?.totalCandidates ?? 0}`,
       `# Host Candidates,${this.iceCandidates.host}`,
       `# SRFLX Candidates (Hole Punching),${this.iceCandidates.srflx}`,
       `# Relay Candidates (TURN),${this.iceCandidates.relay}`,
@@ -319,7 +282,6 @@ export default class ConnectionTester {
       ''
     ];
 
-    // CSV data
     const headers = [...this.headers];
     const rows = [
       headers.join(","),
@@ -328,8 +290,7 @@ export default class ConnectionTester {
       )
     ];
 
-    // Combine metadata + data
-    const csvContent = metadataLines.join("\n") + rows.join("\n");
+    const csvContent = metadataLines.join("\n") + "\n" + rows.join("\n");
 
     const blob = new Blob([csvContent], { type: "text/csv" });
     const link = document.createElement("a");
@@ -344,17 +305,10 @@ export default class ConnectionTester {
     console.log('✅ Metrics downloaded as CSV');
   }
 
-  /**
-   * Manual trigger for CSV download (NEW)
-   * Can be called from a button click
-   */
   exportMetricsCSV() {
     this.downloadCSV();
   }
 
-  /**
-   * Get a summary for testing (NEW)
-   */
   getSummary() {
     const p2pStats = this.getP2PSuccessRate();
     const avgDownload = (
@@ -375,5 +329,24 @@ export default class ConnectionTester {
       connectionMethod: this.privacyMetrics.connectionMethod,
       candidateBreakdown: this.iceCandidates
     };
+  }
+
+  reset() {
+    this.collectedStats = [];
+    this.headers.clear();
+    this.lastBytesReceived = 0;
+    this.lastBytesSent = 0;
+    this.lastTimestamp = 0;
+    this.iceCandidates = { host: 0, srflx: 0, relay: 0, prflx: 0, unknown: 0 };
+    this.privacyMetrics = {
+      candidatesGenerated: 0,
+      p2pCandidates: 0,
+      turnCandidates: 0,
+      activeCandidateType: null,
+      connectionMethod: null
+    };
+    this.activeCandidatePair = null;
+    this.isP2P = null;
+    this.callStartTime = null;
   }
 }

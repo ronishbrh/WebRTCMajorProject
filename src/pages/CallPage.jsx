@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useUser } from "../utils/UserContext";
-import { arrayBufferToBase64, base64ToArrayBuffer, decryptAES, deriveSharedSecret, encryptAES, generateECDHKeys, importAESKey, importECDSAPublicKey, signChallenge, verifyChallenge } from "../utils/crypto";
+import {
+	arrayBufferToBase64, base64ToArrayBuffer, decryptAES,
+	deriveSharedSecret, encryptAES, generateECDHKeys, importAESKey,
+	importECDSAPublicKey, signChallenge, verifyChallenge
+} from "../utils/crypto";
 import ConnectionTester from "../utils/ConnectionTester";
 import { getIceServersConfig } from "../utils/meterredTurnServer";
-import { FiCamera, FiCameraOff, FiMic, FiMicOff, FiPhoneCall, FiSettings } from "react-icons/fi";
+import { FiCamera, FiCameraOff, FiMic, FiMicOff, FiPhoneCall, FiSettings, FiX } from "react-icons/fi";
 import { IdentityManager } from "../utils/IdentityManager";
 
 // Resolution presets
@@ -14,10 +18,11 @@ const RESOLUTIONS = {
 	high: { width: 1920, height: 1080, label: "Full HD (1080p)" }
 };
 
+
 export default function CallPage() {
 	const location = useLocation();
 	const contact = location.state?.contact;
-	const signalingServer = location.state?.signalingServer; 
+	const signalingServer = location.state?.signalingServer;
 
 	const localVideoRef = useRef(null);
 	const remoteVideoRef = useRef(null);
@@ -29,18 +34,17 @@ export default function CallPage() {
 	const [error, setError] = useState(null);
 	const [showEndCallNotification, setShowEndCallNotification] = useState(false);
 	const [showSettings, setShowSettings] = useState(false);
+	const [showStats, setShowStats] = useState(false);
 	const [resolution, setResolution] = useState("medium");
 	const [liveStats, setLiveStats] = useState({
 		downloadBitrate: 0, uploadBitrate: 0, jitter: 0, packetsLost: 0, rtt: "N/A",
-		inboundFPS: 0,
-		inboundResolutionWidth: 0,
-		inboundResolutionHeight: 0,
-
-		outboundFPS: 0,
-		outboundResolutionWidth: 0,
-		outboundResolutionHeight: 0,
+		inboundFPS: 0, inboundResolutionWidth: 0, inboundResolutionHeight: 0,
+		outboundFPS: 0, outboundResolutionWidth: 0, outboundResolutionHeight: 0,
 	});
 	const [hasRemoteStream, setHasRemoteStream] = useState(false);
+	// Controls auto-hide on mobile
+	const [controlsVisible, setControlsVisible] = useState(true);
+	const controlsTimerRef = useRef(null);
 
 	const pcRef = useRef(null);
 	const wsRef = useRef(null);
@@ -49,29 +53,38 @@ export default function CallPage() {
 	const ECDHKeyPair = useRef(null);
 	const AESKey = useRef(null);
 	const { identity } = useUser();
-	const identityManager = new IdentityManager()
+	const identityManager = new IdentityManager();
 
 	const navigate = useNavigate();
 
-	// Determine call role from navigation state
-	const callInitiatedFromHome = Boolean(location.state?.callInitiated); // caller
-	const incomingCallAccepted = Boolean(location.state?.incomingCall); // callee
+	const callInitiatedFromHome = Boolean(location.state?.callInitiated);
+	const incomingCallAccepted = Boolean(location.state?.incomingCall);
 
 	const [isCalling, setIsCalling] = useState(callInitiatedFromHome);
 	const [callAnswered, setCallAnswered] = useState(false);
 	const callTimeoutRef = useRef(null);
 
-	//const stun = localStorage.getItem("activeStun") || "stun:stun.l.google.com:19302"
+	// ---- Controls auto-hide on mobile ----
+	const showControls = useCallback(() => {
+		setControlsVisible(true);
+		if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+		controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 4000);
+	}, []);
 
-	// --------- PURE FUNCTION (no setState allowed here) ------
+	useEffect(() => {
+		// Start auto-hide timer
+		showControls();
+		return () => {
+			if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+		};
+	}, [showControls]);
+
+	// ---- Media helpers ----
 	const requestMediaStream = async (resolutionKey) => {
 		try {
 			const res = RESOLUTIONS[resolutionKey];
 			const stream = await navigator.mediaDevices.getUserMedia({
-				video: {
-					width: { ideal: res.width },
-					height: { ideal: res.height }
-				},
+				video: { width: { ideal: res.width }, height: { ideal: res.height } },
 				audio: true
 			});
 			return { stream, error: null };
@@ -81,7 +94,7 @@ export default function CallPage() {
 		}
 	};
 
-	const cleanupMedia = () => {
+	const cleanupMedia = useCallback(() => {
 		if (localStreamRef.current) {
 			localStreamRef.current.getTracks().forEach(t => t.stop());
 			localStreamRef.current = null;
@@ -95,261 +108,193 @@ export default function CallPage() {
 			pcRef.current.close();
 			pcRef.current = null;
 		}
-		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-			console.log("Disconnected sdfsdfsfewr")
-			wsRef.current.close();
+		if (wsRef.current) {
+			if (wsRef.current.readyState === WebSocket.OPEN) wsRef.current.close();
 			wsRef.current = null;
 		}
 		if (callTimeoutRef.current) {
 			clearTimeout(callTimeoutRef.current);
 			callTimeoutRef.current = null;
 		}
-	};
+	}, []);
 
-	const handleSignalingMessage = async (data) => {
+	// ---- End call + navigate home ----
+	const endCallAndNavigate = useCallback(() => {
+		cleanupMedia();
+		navigate("/");
+	}, [cleanupMedia, navigate]);
+
+	const handleEndCall = useCallback(() => {
+		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+			wsRef.current.send(JSON.stringify({
+				type: "end-call",
+				from: identity.userName,
+				to: contact.userName,
+			}));
+		}
+		endCallAndNavigate();
+	}, [identity, contact, endCallAndNavigate]);
+
+	// ---- Signaling message handler ----
+	const handleSignalingMessage = useCallback(async (data) => {
 		const message = JSON.parse(data);
 		const pc = pcRef.current;
 
 		if (message.type === "call-cancelled") {
-			alert("Call was cancelled");
-			//cleanupMedia();
+			cleanupMedia();
 			navigate("/");
 			return;
 		}
 
 		if (message.type === "call-declined") {
-			alert(`${contact.userName} declined the call`);
-			//cleanupMedia();
+			cleanupMedia();
 			navigate("/");
 			return;
 		}
 
 		if (message.type === "call-accepted") {
-			console.log("Call acceptance received at ", Date.now());
+			console.log("Call acceptance received at", Date.now());
 			if (callTimeoutRef.current) {
 				clearTimeout(callTimeoutRef.current);
 				callTimeoutRef.current = null;
 			}
-
 			setIsCalling(false);
 			setCallAnswered(true);
-			// Caller starts handshake when callee accepts
 			await startHandshake();
 		}
 
 		if (message.type === "join") {
-			// Callee receives join from caller then now start challenge flow
 			const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
 			const signature = await signChallenge(identity.privateKey, rawPubKey);
-			const msg = {
+			wsRef.current.send(JSON.stringify({
 				type: "challenge1",
 				publicKey: arrayBufferToBase64(rawPubKey),
 				signature: arrayBufferToBase64(signature),
 				from: identity.userName,
 				to: contact.userName,
-			};
-			wsRef.current.send(JSON.stringify(msg));
-			console.log("Challenge1 sent");
+			}));
 		}
 
 		if (message.type === "challenge1") {
-			console.log("Received challenge1 from", message.from);
 			const rawECDH = base64ToArrayBuffer(message.publicKey);
 			const signature = base64ToArrayBuffer(message.signature);
-
 			let contactPublicKey = contact.publicKey;
-			if (typeof contactPublicKey === 'string') {
-				contactPublicKey = await importECDSAPublicKey(contactPublicKey);
-			}
+			if (typeof contactPublicKey === "string") contactPublicKey = await importECDSAPublicKey(contactPublicKey);
 
 			const valid = await verifyChallenge(contactPublicKey, rawECDH, signature);
-
 			if (valid) {
 				const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
 				const sig = await signChallenge(identity.privateKey, rawPubKey);
-				const msg = {
+				wsRef.current.send(JSON.stringify({
 					type: "challenge2",
 					publicKey: arrayBufferToBase64(rawPubKey),
 					signature: arrayBufferToBase64(sig),
 					from: identity.userName,
 					to: contact.userName,
-				};
-				wsRef.current.send(JSON.stringify(msg));
-				console.log("Challenge2 sent");
+				}));
 
-				const publicKey = await crypto.subtle.importKey(
-					"raw", rawECDH,
-					{ name: "ECDH", namedCurve: "P-256" },
-					true, []
-				);
-
+				const publicKey = await crypto.subtle.importKey("raw", rawECDH, { name: "ECDH", namedCurve: "P-256" }, true, []);
 				const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
-				const aesKey = await importAESKey(sharedSecret);
-				AESKey.current = aesKey;
+				AESKey.current = await importAESKey(sharedSecret);
 
-				// Flush pending ICE candidates now after we have AES key
 				if (pendingIceCandidates.current.length > 0) {
-					console.log(`Flushing ${pendingIceCandidates.current.length} pending ICE candidates`);
-					for (const candidate of pendingIceCandidates.current) {
-						await sendCandidate(candidate);
-					}
+					for (const candidate of pendingIceCandidates.current) await sendCandidate(candidate);
 					pendingIceCandidates.current = [];
 				}
 			} else {
-				console.error("User Unverified signature failed");
+				console.error("Unverified signature in challenge1");
 			}
 		}
 
 		if (message.type === "challenge2") {
-			console.log("Received challenge2 from", message.from);
 			const rawECDH = base64ToArrayBuffer(message.publicKey);
 			const signature = base64ToArrayBuffer(message.signature);
-
 			let contactPublicKey = contact.publicKey;
-			if (typeof contactPublicKey === 'string') {
-				try {
-					contactPublicKey = await importECDSAPublicKey(contactPublicKey);
-				} catch (error) {
-					console.error("Failed to import public key:", error);
-					return;
-				}
-			} else if (!contactPublicKey) {
-				return;
-			}
+			if (typeof contactPublicKey === "string") {
+				try { contactPublicKey = await importECDSAPublicKey(contactPublicKey); }
+				catch (e) { console.error("Failed to import public key:", e); return; }
+			} else if (!contactPublicKey) return;
 
 			const valid = await verifyChallenge(contactPublicKey, rawECDH, signature);
-
 			if (valid) {
-				console.log("User verified now creating offer");
-				const publicKey = await crypto.subtle.importKey(
-					"raw", rawECDH,
-					{ name: "ECDH", namedCurve: "P-256" },
-					true, []
-				);
-
+				const publicKey = await crypto.subtle.importKey("raw", rawECDH, { name: "ECDH", namedCurve: "P-256" }, true, []);
 				const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
-				const aesKey = await importAESKey(sharedSecret);
-				AESKey.current = aesKey;
+				AESKey.current = await importAESKey(sharedSecret);
 
-				// Flush pending ICE candidates
 				if (pendingIceCandidates.current.length > 0) {
-					console.log(`Flushing ${pendingIceCandidates.current.length} pending ICE candidates`);
-					for (const candidate of pendingIceCandidates.current) {
-						await sendCandidate(candidate);
-					}
+					for (const candidate of pendingIceCandidates.current) await sendCandidate(candidate);
 					pendingIceCandidates.current = [];
 				}
 
 				const offer = await pc.createOffer();
 				await pc.setLocalDescription(offer);
-				console.log("Created offer, local description set");
 
 				const encoder = new TextEncoder();
 				const sdpBuffer = encoder.encode(offer.sdp);
-				const { iv, encrypted: encryptedSDPBuffer } = await encryptAES(sdpBuffer, aesKey);
-
-				const offerMsg = {
+				const { iv, encrypted } = await encryptAES(sdpBuffer, AESKey.current);
+				wsRef.current.send(JSON.stringify({
 					type: "offer",
-					offer: arrayBufferToBase64(encryptedSDPBuffer),
+					offer: arrayBufferToBase64(encrypted),
 					iv: arrayBufferToBase64(iv),
 					from: identity.userName,
 					to: contact.userName,
-				};
-				wsRef.current.send(JSON.stringify(offerMsg));
-				console.log("Offer sent");
+				}));
 			} else {
-				console.error("User Unverified signature failed");
+				console.error("Unverified signature in challenge2");
 			}
 		}
 
 		if (message.type === "offer") {
-			console.log("Received offer from", message.from);
 			const iv = base64ToArrayBuffer(message.iv);
 			const encryptedSDPBuffer = base64ToArrayBuffer(message.offer);
 			const SDPBuffer = await decryptAES(encryptedSDPBuffer, AESKey.current, iv);
-			const decoder = new TextDecoder();
-			const sdp = decoder.decode(SDPBuffer);
-
+			const sdp = new TextDecoder().decode(SDPBuffer);
 			await pc.setRemoteDescription({ type: "offer", sdp });
 
-			// Add queued ICE candidates
-			console.log(`Flushing ${pendingCandidates.current.length} queued ICE candidates`);
 			for (const c of pendingCandidates.current) {
-				try {
-					await pc.addIceCandidate(c);
-				} catch (e) {
-					console.error("Error adding queued ICE candidate", e);
-				}
+				try { await pc.addIceCandidate(c); } catch (e) { console.error("ICE candidate error", e); }
 			}
 			pendingCandidates.current = [];
 
-			// Send answer
 			const answer = await pc.createAnswer();
 			await pc.setLocalDescription(answer);
-			console.log("Created and set local description (answer)");
-
-			const encoder = new TextEncoder();
-			const ansSdpBuffer = encoder.encode(answer.sdp);
-			const { iv: ansiv, encrypted: encryptedAnsSDPBuffer } = await encryptAES(ansSdpBuffer, AESKey.current);
-
-			const answerMsg = {
+			const ansSdpBuffer = new TextEncoder().encode(answer.sdp);
+			const { iv: ansiv, encrypted: encAns } = await encryptAES(ansSdpBuffer, AESKey.current);
+			wsRef.current.send(JSON.stringify({
 				type: "answer",
-				answer: arrayBufferToBase64(encryptedAnsSDPBuffer),
+				answer: arrayBufferToBase64(encAns),
 				iv: arrayBufferToBase64(ansiv),
 				from: identity.userName,
 				to: contact.userName,
-			};
-			wsRef.current.send(JSON.stringify(answerMsg));
-			console.log("Answer sent");
+			}));
 		}
 
 		if (message.type === "answer") {
-			console.log("Received answer from", message.from);
 			const iv = base64ToArrayBuffer(message.iv);
 			const encryptedSDPBuffer = base64ToArrayBuffer(message.answer);
 			const SDPBuffer = await decryptAES(encryptedSDPBuffer, AESKey.current, iv);
-			const decoder = new TextDecoder();
-			const sdp = decoder.decode(SDPBuffer);
-
+			const sdp = new TextDecoder().decode(SDPBuffer);
 			await pc.setRemoteDescription({ type: "answer", sdp });
-			console.log("Set remote description (answer)");
 
-			// Add queued ICE candidates
-			console.log(`Flushing ${pendingCandidates.current.length} queued ICE candidates`);
 			for (const c of pendingCandidates.current) {
-				try {
-					await pc.addIceCandidate(c);
-				} catch (e) {
-					console.error("Error adding queued ICE candidate", e);
-				}
+				try { await pc.addIceCandidate(c); } catch (e) { console.error("ICE candidate error", e); }
 			}
 			pendingCandidates.current = [];
-
 			setIsCalling(false);
 			setCallAnswered(true);
-			console.log("Call fully established");
 		}
 
 		if (message.type === "ice") {
-			console.log("Received ICE candidate from", message.from);
 			const iv = base64ToArrayBuffer(message.iv);
 			const encryptedCandidateBuffer = base64ToArrayBuffer(message.candidate);
 			const candidateBuffer = await decryptAES(encryptedCandidateBuffer, AESKey.current, iv);
-			const decoder = new TextDecoder();
-			const decodedString = decoder.decode(candidateBuffer);
-			const candidateObj = JSON.parse(decodedString);
-			const candidate = new RTCIceCandidate(candidateObj);
+			const candidate = new RTCIceCandidate(JSON.parse(new TextDecoder().decode(candidateBuffer)));
 
 			if (!pc.currentRemoteDescription) {
-				console.log("Queueing ICE candidate (no remote description yet)");
 				pendingCandidates.current.push(candidate);
 			} else {
-				try {
-					await pc.addIceCandidate(candidate);
-					console.log("Added ICE candidate successfully");
-				} catch (e) {
-					console.error("Error adding ICE candidate", e);
-				}
+				try { await pc.addIceCandidate(candidate); }
+				catch (e) { console.error("ICE candidate error", e); }
 			}
 		}
 
@@ -357,23 +302,19 @@ export default function CallPage() {
 			console.log("Remote user ended call");
 			setShowEndCallNotification(true);
 			setTimeout(() => {
-				//cleanupMedia();
-				navigate("/");
-			}, 3000);
+				endCallAndNavigate();
+			}, 2500);
 		}
-	};
+	
+	}, [identity, contact, cleanupMedia, navigate, endCallAndNavigate]);
 
 	async function sendCandidate(candidate) {
 		if (!AESKey.current) {
-			console.warn("AES key not ready so queueing ICE candidate");
 			pendingIceCandidates.current.push(candidate);
 			return;
 		}
-
-		const encoder = new TextEncoder();
-		const candidateBuffer = encoder.encode(JSON.stringify(candidate));
+		const candidateBuffer = new TextEncoder().encode(JSON.stringify(candidate));
 		const { iv, encrypted } = await encryptAES(candidateBuffer, AESKey.current);
-
 		wsRef.current.send(JSON.stringify({
 			type: "ice",
 			candidate: arrayBufferToBase64(encrypted),
@@ -384,99 +325,52 @@ export default function CallPage() {
 	}
 
 	async function startHandshake() {
-		if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-			console.error("WS not open so cannot start handshake");
-			return;
-		}
-
-		console.log("Starting handshake and sending join");
-		wsRef.current.send(
-			JSON.stringify({
-				type: "join",
-				from: identity.userName,
-				to: contact.userName,
-			})
-		);
+		if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+		wsRef.current.send(JSON.stringify({ type: "join", from: identity.userName, to: contact.userName }));
 	}
 
-	// --------- INITIAL STARTUP ---------
+	// ---- Init ----
 	useEffect(() => {
 		let active = true;
 
 		if (!identity || !contact || !signalingServer) {
-			console.error("Missing required data:", { identity: !!identity, contact: !!contact, signalingServer: !!signalingServer });
-			if (!identity || !contact) {
-				navigate("/login");
-			}
+			if (!identity || !contact) navigate("/login");
 			return;
 		}
 
 		const init = async () => {
-			const { stream, error } = await requestMediaStream("medium");
-
+			const { stream, error: streamError } = await requestMediaStream("medium");
 			if (!active) return;
-
-			if (error) {
-				setError(error);
-				return;
-			}
+			if (streamError) { setError(streamError); return; }
 
 			localStreamRef.current = stream;
 			setError(null);
+			if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-			if (localVideoRef.current) {
-				localVideoRef.current.srcObject = stream;
-			}
+			let manualTurnServers = [];
+			try { manualTurnServers = await identityManager.getTurnServers(identity.userName); }
+			catch (err) { console.error("Failed to load manual TURN servers:", err); }
 
-			// const pc = new RTCPeerConnection({
-			// 	iceServers: [
-			// 		{ urls: stun },
-			// 	],
-			// });
-			let manualTurnServers = []
-			try {
-				manualTurnServers = await identityManager.getTurnServers(identity.userName)
-				console.log("Manual TURN servers loaded:", manualTurnServers)
-			} catch (err) {
-				console.error("Failed to load manual turn servers: ", err)
-			}
+			let iceServersConfig = await getIceServersConfig(manualTurnServers);
+			const customStun = localStorage.getItem("activeStun") || "stun:stun.l.google.com:19302";
+			iceServersConfig.iceServers.unshift({ urls: [customStun] });
 
-			// Get Metered + manual servers combined
-			let iceServersConfig = await getIceServersConfig(manualTurnServers)
-
-			// Add custom STUN server if exists
-			const customStun = localStorage.getItem("activeStun") || "stun:stun.l.google.com:19302"
-			if (customStun) {
-				iceServersConfig.iceServers.unshift({ urls: [customStun] })
-				console.log("Added custom STUN:", customStun)
-			}
-
-			console.log("ICE servers config:", iceServersConfig)
-
-			console.log("ICE serers config:", iceServersConfig)
-
-			const pc = new RTCPeerConnection(iceServersConfig)
+			const pc = new RTCPeerConnection(iceServersConfig);
 			pcRef.current = pc;
 
-			stream.getTracks().forEach((track) => {
-				pc.addTrack(track, stream);
-			});
+			stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
 			pc.ontrack = (event) => {
 				if (!remoteStreamRef.current) {
 					remoteStreamRef.current = new MediaStream();
-					remoteVideoRef.current.srcObject = remoteStreamRef.current;
-					console.log("Created new remote MediaStream");
+					if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStreamRef.current;
 				}
 				remoteStreamRef.current.addTrack(event.track);
 				setHasRemoteStream(true);
 			};
 
 			pc.oniceconnectionstatechange = () => {
-				console.log("ICE Connection State:", pc.iceConnectionState);
-				const state = pc.iceConnectionState
-				if (state === "connected") {
-
+				if (pc.iceConnectionState === "connected") {
 					const tester = new ConnectionTester(pc, (stats) => {
 						setLiveStats({
 							downloadBitrate: (Math.round(stats.downloadBitrate || 0) / 8000).toFixed(1),
@@ -484,103 +378,51 @@ export default function CallPage() {
 							jitter: stats.jitter?.toFixed(3),
 							packetsLost: stats.packetsLost,
 							rtt: stats.rtt ? stats.rtt.toFixed(1) : null,
-							inboundFPS: stats.inboundFPS ? stats.inboundFPS : null,
-							inboundResolutionWidth: stats.inboundResolutionWidth ? stats.inboundResolutionWidth : null,
-							inboundResolutionHeight: stats.inboundResolutionHeight ? stats.inboundResolutionHeight : null,
-
-							outboundFPS: stats.outboundFPS ? stats.outboundFPS : null,
-							outboundResolutionWidth: stats.outboundResolutionWidth ? stats.outboundResolutionWidth : null,
-							outboundResolutionHeight: stats.outboundResolutionHeight ? stats.outboundResolutionHeight : null,
+							inboundFPS: stats.inboundFPS ?? null,
+							inboundResolutionWidth: stats.inboundResolutionWidth ?? null,
+							inboundResolutionHeight: stats.inboundResolutionHeight ?? null,
+							outboundFPS: stats.outboundFPS ?? null,
+							outboundResolutionWidth: stats.outboundResolutionWidth ?? null,
+							outboundResolutionHeight: stats.outboundResolutionHeight ?? null,
 						});
 					});
-					console.log("Call established at ", Date.now());
 					tester.start(1000);
 					pcRef.current._tester = tester;
 				}
 			};
 
 			pc.onicecandidate = (event) => {
-				if (event.candidate) {
-					console.log("ICE Candidate:", {
-						type: event.candidate.type,
-						candidate: event.candidate.candidate.substring(0, 50) + "..."
-					})
-					sendCandidate(event.candidate);
-				} else {
-					console.log("ICE gathering complete");
-				}
-			};
-
-			pc.onconnectionstatechange = () => {
-				console.log("Connection State:", pc.connectionState);
-			};
-
-			pc.onsignalingstatechange = () => {
-				console.log("Signaling State:", pc.signalingState);
+				if (event.candidate) sendCandidate(event.candidate);
 			};
 
 			ECDHKeyPair.current = await generateECDHKeys();
 
-			//signaling server passed from HomePage
-			console.log("Connecting to signaling server:", signalingServer);
 			const ws = new WebSocket(signalingServer);
-
 			wsRef.current = ws;
 
 			ws.onopen = () => {
-				console.log("WS connected registering");
-				wsRef.current.send(JSON.stringify({ type: "register", userName: identity.userName }));
+				ws.send(JSON.stringify({ type: "register", userName: identity.userName }));
 
-				// If caller: send call-request and wait for acceptance
 				if (callInitiatedFromHome) {
-					console.log("Sending call-request as caller");
 					setIsCalling(true);
-					wsRef.current.send(
-						JSON.stringify({
-							type: "call-request",
-							from: identity.userName,
-							to: contact.userName,
-						})
-					);
-
+					ws.send(JSON.stringify({ type: "call-request", from: identity.userName, to: contact.userName }));
 					callTimeoutRef.current = setTimeout(() => {
 						if (!callAnswered) {
-							alert("Call not answered");
-							wsRef.current.send(
-								JSON.stringify({
-									type: "call-cancelled",
-									from: identity.userName,
-									to: contact.userName,
-								})
-							);
+							ws.send(JSON.stringify({ type: "call-cancelled", from: identity.userName, to: contact.userName }));
 							cleanupMedia();
 							navigate("/");
 						}
 					}, 30000);
 				}
 
-				// If callee: notify caller we accepted
 				if (incomingCallAccepted) {
-					console.log("Sending call-accepted as callee");
 					setCallAnswered(true);
-					wsRef.current.send(
-						JSON.stringify({
-							type: "call-accepted",
-							from: identity.userName,
-							to: contact.userName,
-						})
-					);
+					ws.send(JSON.stringify({ type: "call-accepted", from: identity.userName, to: contact.userName }));
 				}
 			};
 
-			ws.onmessage = (msg) => {
-				console.log("Message received:", msg.data);
-				handleSignalingMessage(msg.data);
-			};
-
-			ws.onerror = (e) => {
-				console.error("WebSocket error", e);
-			};
+			ws.onmessage = (msg) => handleSignalingMessage(msg.data);
+			ws.onerror = (e) => console.error("WebSocket error", e);
 		};
 
 		init();
@@ -589,244 +431,248 @@ export default function CallPage() {
 			active = false;
 			cleanupMedia();
 		};
-	}, [signalingServer, identity, contact, callInitiatedFromHome, incomingCallAccepted, navigate]);
+
+	}, [signalingServer, identity, contact, callInitiatedFromHome, incomingCallAccepted]);
 
 	const cancelCalling = () => {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-			wsRef.current.send(
-				JSON.stringify({
-					type: "call-cancelled",
-					from: identity.userName,
-					to: contact.userName,
-				})
-			);
+			wsRef.current.send(JSON.stringify({ type: "call-cancelled", from: identity.userName, to: contact.userName }));
 		}
 		cleanupMedia();
 		navigate("/");
 	};
 
-	// -------- RESOLUTION CHANGE ----------
+	// ---- Resolution change ----
 	const handleResolutionChange = async (newRes) => {
 		setResolution(newRes);
-
-		const { stream: newStream, error } = await requestMediaStream(newRes);
-
-		if (error) {
-			setError(error);
-			return;
-		}
+		const { stream: newStream, error: streamError } = await requestMediaStream(newRes);
+		if (streamError) { setError(streamError); return; }
 
 		const pc = pcRef.current;
 		if (pc && localStreamRef.current) {
 			const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
 			const newVideoTrack = newStream.getVideoTracks()[0];
-
-			const videoSender = pc.getSenders().find(sender => sender.track?.kind === 'video');
-			if (videoSender && newVideoTrack) {
-				await videoSender.replaceTrack(newVideoTrack);
-			}
-
-			const localVideoTracks = localVideoRef.current.srcObject.getTracks();
-			const updatedTracks = localVideoTracks.filter(t => t.kind !== 'video').concat(newVideoTrack);
-			localVideoRef.current.srcObject = new MediaStream(updatedTracks);
-
-			oldVideoTrack.stop();
+			const videoSender = pc.getSenders().find(s => s.track?.kind === "video");
+			if (videoSender && newVideoTrack) await videoSender.replaceTrack(newVideoTrack);
 
 			const oldAudioTrack = localStreamRef.current.getAudioTracks()[0];
-			const combinedStream = new MediaStream([newVideoTrack, oldAudioTrack]);
-			localStreamRef.current = combinedStream;
+			if (localVideoRef.current) {
+				localVideoRef.current.srcObject = new MediaStream(
+					[...localVideoRef.current.srcObject.getTracks().filter(t => t.kind !== "video"), newVideoTrack]
+				);
+			}
+			oldVideoTrack.stop();
+			localStreamRef.current = new MediaStream([newVideoTrack, oldAudioTrack]);
 		} else {
 			localStreamRef.current = newStream;
 			if (localVideoRef.current) localVideoRef.current.srcObject = newStream;
-			if (pc) {
-				newStream.getTracks().forEach(track => pc.addTrack(track, newStream));
-			}
+			if (pc) newStream.getTracks().forEach(t => pc.addTrack(t, newStream));
 		}
-
 		setShowSettings(false);
 	};
 
 	const toggleVideo = () => {
 		if (!localStreamRef.current) return;
 		const track = localStreamRef.current.getVideoTracks()[0];
-		if (track) {
-			track.enabled = !track.enabled;
-			setIsVideoOn(track.enabled);
-		}
+		if (track) { track.enabled = !track.enabled; setIsVideoOn(track.enabled); }
 	};
 
 	const toggleAudio = () => {
 		if (!localStreamRef.current) return;
 		const track = localStreamRef.current.getAudioTracks()[0];
-		if (track) {
-			track.enabled = !track.enabled;
-			setIsAudioOn(track.enabled);
-		}
+		if (track) { track.enabled = !track.enabled; setIsAudioOn(track.enabled); }
 	};
 
-	const handleEndCall = () => {
-		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-			wsRef.current.send(JSON.stringify({
-				type: "end-call",
-				from: identity.userName,
-				to: contact.userName,
-			}));
-		}
-		cleanupMedia();
-		navigate("/");
-	};
+	// ---- Shared sub-components ----
+	const StatsPanel = ({ compact = false }) => (
+		<div className={`bg-black/80 backdrop-blur rounded-lg text-green-300 font-mono ${compact ? "text-xs p-2 grid grid-cols-2 gap-x-3 gap-y-0.5" : "text-xs p-3 space-y-0.5"}`}>
+			<div>⬇ {liveStats.downloadBitrate} kBps</div>
+			<div>⬆ {liveStats.uploadBitrate} kBps</div>
+			<div>📶 {liveStats.rtt ? `${liveStats.rtt} ms` : "N/A"}</div>
+			<div>Jitter: {liveStats.jitter ? `${(liveStats.jitter * 1000).toFixed(1)} ms` : "—"}</div>
+			<div>Lost: {liveStats.packetsLost ?? "—"}</div>
+			<div>In FPS: {liveStats.inboundFPS ?? "—"}</div>
+			<div>Out FPS: {liveStats.outboundFPS ?? "—"}</div>
+			<div>In Res: {liveStats.inboundResolutionWidth && liveStats.inboundResolutionHeight ? `${liveStats.inboundResolutionWidth}×${liveStats.inboundResolutionHeight}` : "—"}</div>
+			<div className={compact ? "col-span-2" : ""}>Out Res: {liveStats.outboundResolutionWidth && liveStats.outboundResolutionHeight ? `${liveStats.outboundResolutionWidth}×${liveStats.outboundResolutionHeight}` : "—"}</div>
+		</div>
+	);
+
+	const SettingsPanel = () => (
+		<div className="bg-gray-900/95 border border-gray-700 rounded-xl shadow-2xl p-4 w-56">
+			<h3 className="text-xs font-semibold text-gray-300 mb-3 uppercase tracking-wider">Video Quality</h3>
+			<div className="space-y-1.5">
+				{Object.entries(RESOLUTIONS).map(([key, value]) => (
+					<button
+						key={key}
+						onClick={() => handleResolutionChange(key)}
+						className={`w-full px-3 py-2 rounded-lg text-left text-xs transition ${resolution === key ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}
+					>
+						<div className="font-medium">{value.label}</div>
+						<div className="opacity-60">{value.width} × {value.height}</div>
+					</button>
+				))}
+			</div>
+			<p className="text-xs text-gray-500 mt-3 pt-2 border-t border-gray-700">Higher quality uses more bandwidth.</p>
+		</div>
+	);
+
+	// ---- End call notification overlay (shared) ----
+	const EndCallOverlay = () => (
+		<div className="absolute inset-0 flex items-center justify-center z-50 bg-black/50 backdrop-blur-sm">
+			<div className="bg-gray-900 border-2 border-red-500 text-white px-8 py-6 rounded-2xl shadow-2xl text-center">
+				<div className="text-4xl mb-3 text-red-400"><FiPhoneCall /></div>
+				<div className="text-lg font-semibold">Call Ended</div>
+				<div className="text-sm text-gray-400 mt-1">Remote user ended the call</div>
+				<div className="text-xs text-gray-500 mt-3 animate-pulse">Redirecting…</div>
+			</div>
+		</div>
+	);
+
+	// ---- CALLING overlay ----
+	const CallingOverlay = () => (
+		<div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 backdrop-blur-sm">
+			<div className="w-16 h-16 rounded-full border-4 border-blue-500 border-t-transparent animate-spin mb-6" />
+			<p className="text-white text-lg font-medium mb-6">Calling {contact?.userName}…</p>
+			<button onClick={cancelCalling} className="px-5 py-2 rounded-full bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition">
+				Cancel
+			</button>
+		</div>
+	);
+
 
 	return (
-		<div className="w-full h-screen bg-black overflow-hidden mx-auto relative flex flex-col lg:flex-row">
+		// Full-screen black container, everything absolutely positioned inside
+		<div className="fixed inset-0 bg-black text-white overflow-hidden" onClick={showControls}>
 
-			{/* CALLING overlay for caller */}
-			{isCalling && (
-				<div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-50">
-					<p className="text-white text-lg mb-4">Calling {contact.userName}...</p>
-					<div className="flex gap-3">
-						<button onClick={cancelCalling} className="px-4 py-2 rounded bg-gray-700 text-white hover:bg-gray-600">Cancel</button>
-					</div>
+			{/* ── REMOTE VIDEO (always full screen behind everything) ── */}
+			<video
+				ref={remoteVideoRef}
+				autoPlay
+				playsInline
+				className="absolute inset-0 w-full h-full object-contain"
+			/>
+
+			{/* Waiting placeholder */}
+			{!hasRemoteStream && (
+				<div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+					<p className="text-gray-400 text-base">Waiting for {contact?.userName}…</p>
 				</div>
 			)}
 
-			{/* DESKTOP LAYOUT */}
-			<div >
-				{/* Remote video */}
-				<div className="flex-1 flex items-center justify-center bg-gray-800 overflow-hidden">
-					<video
-						ref={remoteVideoRef}
-						autoPlay
-						playsInline
-						className="w-full h-full object-contain"
-					/>
-					{!hasRemoteStream && (
-						<p className="absolute text-lg opacity-60 px-4">
-							Waiting for remote user...
-						</p>
-					)}
-				</div>
-
-				{/* Local video preview */}
-				<div className="absolute top-3 right-3 w-40 h-32 bg-gray-900 rounded-lg overflow-hidden border shadow-xl">
-					<video
-						ref={localVideoRef}
-						autoPlay
-						playsInline
-						muted
-						className="w-full h-full object-contain"
-						style={{ transform: "scaleX(-1)" }}
-					/>
-					{!isVideoOn && (
-						<div className="absolute inset-0 bg-gray-900 flex items-center justify-center">
-							<span className="text-4xl">👤</span>
-						</div>
-					)}
-					<div className="absolute bottom-1 left-1 bg-black bg-opacity-70 px-2 text-xs rounded">
-						You • {RESOLUTIONS[resolution].label}
-					</div>
-				</div>
-
-				{/* Error message */}
-				{error && (
-					<div className="absolute top-4 left-4 bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg max-w-md text-sm">
-						{error}
+			{/* ── LOCAL VIDEO (picture-in-picture, top-right) ── */}
+			<div className="absolute top-3 right-3 w-28 h-20 sm:w-36 sm:h-28 lg:w-44 lg:h-32 rounded-xl overflow-hidden border border-gray-600 shadow-2xl z-10">
+				<video
+					ref={localVideoRef}
+					autoPlay
+					playsInline
+					muted
+					className="w-full h-full object-cover"
+					style={{ transform: "scaleX(-1)" }}
+				/>
+				{!isVideoOn && (
+					<div className="absolute inset-0 bg-gray-900 flex items-center justify-center">
+						<span className="text-3xl">👤</span>
 					</div>
 				)}
-
-				{/* Settings panel */}
-				{showSettings && (
-					<div className="absolute top-20 right-4 bg-gray-900 border border-gray-700 rounded-lg shadow-2xl p-4 w-64">
-						<h3 className="text-sm font-semibold mb-3">Video Quality</h3>
-						{Object.entries(RESOLUTIONS).map(([key, value]) => (
-							<button
-								key={key}
-								onClick={() => handleResolutionChange(key)}
-								className={`w-full px-3 py-2 rounded mb-2 text-left ${resolution === key
-									? "bg-blue-600 text-white"
-									: "bg-gray-800 text-gray-300 hover:bg-gray-700"
-									}`}
-							>
-								<div className="font-medium text-sm">{value.label}</div>
-								<div className="text-xs opacity-70">
-									{value.width} × {value.height}
-								</div>
-							</button>
-						))}
-						<p className="text-xs text-gray-400 mt-3 border-t pt-2">
-							Higher quality uses more bandwidth.
-						</p>
-					</div>
-				)}
-
-				{/* Bottom controls - Desktop */}
-				<div className="absolute bottom-6 left-0 right-0 flex justify-center gap-4">
-					<button
-						onClick={handleEndCall}
-						className="px-6 py-3 bg-red-600 hover:bg-red-700 rounded-full text-sm font-medium shadow-lg"
-					>
-						End Call
-					</button>
-
-					<div className="flex gap-3 bg-gray-800 bg-opacity-80 rounded-full p-2 shadow-lg backdrop-blur">
-						<button
-							onClick={toggleAudio}
-							className={`p-3 rounded-full transition ${isAudioOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
-								}`}
-						>
-							<span className="text-xl">{isAudioOn ? <FiMic /> : <FiMicOff />}</span>
-						</button>
-
-						<button
-							onClick={toggleVideo}
-							className={`p-3 rounded-full transition ${isVideoOn ? "bg-gray-700 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"
-								}`}
-						>
-							<span className="text-xl">{isVideoOn ? <FiCamera /> : <FiCameraOff />}</span>
-						</button>
-
-						<button
-							onClick={() => setShowSettings(!showSettings)}
-							className={`p-3 rounded-full ${showSettings ? "bg-blue-600" : "bg-gray-700 hover:bg-gray-600"
-								}`}
-						>
-							<span className="text-xl"><FiSettings /></span>
-						</button>
-					</div>
-
-					<div className="absolute bottom-4 left-4 bg-black/70 px-3 py-2 rounded text-xs text-green-300">
-						<div>⬇ Download: {liveStats.downloadBitrate} kBps</div>
-						<div>⬆ Upload: {liveStats.uploadBitrate} kBps</div>
-						<div>📶 Latency: {liveStats.rtt ? `${liveStats.rtt} ms` : 'N/A'}</div>
-						<div>Jitter: {liveStats.jitter * 1000} ms</div>
-						<div>Lost: {liveStats.packetsLost}</div>
-						<div>InFPS: {liveStats.inboundFPS}</div>
-						<div>OutFPS: {liveStats.outboundFPS}</div>
-						<div>OutResoultion: {liveStats.outboundResolutionWidth}x{liveStats.outboundResolutionHeight}</div>
-						<div>InResoultion: {liveStats.inboundResolutionWidth}x{liveStats.inboundResolutionHeight}</div>
-					</div>
+				<div className="absolute bottom-1 left-1 bg-black/70 px-1.5 py-0.5 text-xs rounded text-gray-300">
+					{RESOLUTIONS[resolution].label}
 				</div>
-
-				{/* End Call Notification */}
-				{showEndCallNotification && (
-					<div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 border-2 border-red-500 text-white px-8 py-6 rounded-lg shadow-2xl z-50 text-center">
-						<div className="text-4xl mb-3"><FiPhoneCall /></div>
-						<div className="text-lg font-semibold">Call Ended</div>
-						<div className="text-sm text-gray-400 mt-2">Remote user ended the call</div>
-					</div>
-				)}
 			</div>
 
-		
+			{/* ── STATS TOGGLE BUTTON (top-left) ── */}
+			<button
+				onClick={(e) => { e.stopPropagation(); setShowStats(s => !s); showControls(); }}
+				className={`absolute top-3 left-3 z-20 px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${showStats ? "bg-green-700 text-white" : "bg-black/60 text-green-400 hover:bg-black/80"}`}
+			>
+				📊 Stats
+			</button>
 
-				{/* End Call Notification */}
-				{showEndCallNotification && (
-					<div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 border-2 border-red-500 text-white px-6 py-4 rounded-lg shadow-2xl z-50 text-center">
-						<div className="text-3xl mb-2"><FiPhoneCall /></div>
-						<div className="text-base font-semibold">Call Ended</div>
-						<div className="text-xs text-gray-400 mt-1">Remote user ended the call</div>
-					</div>
-				)}
+			{/* ── STATS PANEL (top-left, below button) ── */}
+			{showStats && (
+				<div className="absolute top-12 left-3 z-20 max-w-xs" onClick={e => e.stopPropagation()}>
+					<StatsPanel compact={false} />
+				</div>
+			)}
+
+			{/* ── ERROR ── */}
+			{error && (
+				<div className="absolute top-14 left-3 z-20 bg-red-700/90 text-white px-4 py-2 rounded-lg text-sm shadow-lg max-w-xs">
+					{error}
+				</div>
+			)}
+
+			{/* ── SETTINGS PANEL (floating above controls) ── */}
+			{showSettings && (
+				<div
+					className="absolute bottom-24 left-1/2 -translate-x-1/2 z-30"
+					onClick={e => e.stopPropagation()}
+				>
+					<SettingsPanel />
+				</div>
+			)}
+
+			{/* ── BOTTOM CONTROLS BAR ── */}
+			{/* On mobile: auto-hides after 4s of inactivity. On desktop: always visible. */}
+			<div
+				className={`
+					absolute bottom-0 left-0 right-0 z-20
+					flex items-center justify-center gap-3 sm:gap-4
+					px-4 py-4 sm:py-5
+					bg-gradient-to-t from-black/80 to-transparent
+					transition-opacity duration-300
+					md:opacity-100
+					${controlsVisible ? "opacity-100" : "opacity-0 pointer-events-none"}
+				`}
+				onClick={e => e.stopPropagation()}
+			>
+				{/* Mic */}
+				<button
+					onClick={toggleAudio}
+					className={`p-3 sm:p-3.5 rounded-full transition shadow-lg ${isAudioOn ? "bg-gray-700/90 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"}`}
+					title={isAudioOn ? "Mute" : "Unmute"}
+				>
+					{isAudioOn ? <FiMic size={20} /> : <FiMicOff size={20} />}
+				</button>
+
+				{/* Camera */}
+				<button
+					onClick={toggleVideo}
+					className={`p-3 sm:p-3.5 rounded-full transition shadow-lg ${isVideoOn ? "bg-gray-700/90 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"}`}
+					title={isVideoOn ? "Turn off camera" : "Turn on camera"}
+				>
+					{isVideoOn ? <FiCamera size={20} /> : <FiCameraOff size={20} />}
+				</button>
+
+				{/* End Call */}
+				<button
+					onClick={handleEndCall}
+					className="px-5 sm:px-7 py-3 sm:py-3.5 bg-red-600 hover:bg-red-700 rounded-full font-semibold shadow-lg flex items-center gap-2 transition"
+				>
+					<FiPhoneCall size={18} />
+					<span className="text-sm hidden sm:inline">End Call</span>
+				</button>
+
+				{/* Settings */}
+				<button
+					onClick={() => setShowSettings(s => !s)}
+					className={`p-3 sm:p-3.5 rounded-full transition shadow-lg ${showSettings ? "bg-blue-600 hover:bg-blue-700" : "bg-gray-700/90 hover:bg-gray-600"}`}
+					title="Settings"
+				>
+					<FiSettings size={20} />
+				</button>
 			</div>
+
+			{/* ── TAP TO SHOW CONTROLS hint (mobile only, when controls hidden) ── */}
+			{!controlsVisible && (
+				<div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 md:hidden">
+					<p className="text-white/30 text-xs">Tap to show controls</p>
+				</div>
+			)}
+
+			{/* ── OVERLAYS ── */}
+			{isCalling && <CallingOverlay />}
+			{showEndCallNotification && <EndCallOverlay />}
 		</div>
 	);
 }
