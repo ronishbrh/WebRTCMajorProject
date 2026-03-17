@@ -386,6 +386,7 @@ export default function CallPage() {
 							outboundResolutionHeight: stats.outboundResolutionHeight ?? null,
 						});
 					});
+					console.log("Call established at ", Date.now());
 					tester.start(1000);
 					pcRef.current._tester = tester;
 				}
