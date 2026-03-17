@@ -797,7 +797,7 @@ export default function CallPage() {
 						<div>⬇ Download: {liveStats.downloadBitrate} kBps</div>
 						<div>⬆ Upload: {liveStats.uploadBitrate} kBps</div>
 						<div>📶 Latency: {liveStats.rtt ? `${liveStats.rtt} ms` : 'N/A'}</div>
-						<div>Jitter: {liveStats.jitter} s</div>
+						<div>Jitter: {liveStats.jitter * 1000} ms</div>
 						<div>Lost: {liveStats.packetsLost}</div>
 						<div>InFPS: {liveStats.inboundFPS}</div>
 						<div>OutFPS: {liveStats.outboundFPS}</div>
