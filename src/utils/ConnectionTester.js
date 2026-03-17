@@ -19,7 +19,7 @@ export default class ConnectionTester {
       unknown: 0
     };
 
-    this.activeCandidatePair = null; 
+    this.activeCandidatePair = null;
     this.callStartTime = null;
     this.isP2P = null;
 
@@ -33,7 +33,6 @@ export default class ConnectionTester {
     };
   }
 
-  // Start monitoring connection stats
   start(intervalMs = 1000) {
     this.running = true;
     this.callStartTime = Date.now();
@@ -87,7 +86,6 @@ export default class ConnectionTester {
               priority: localCandidate.priority
             };
 
-            // Determine connection method
             if (activeCandidateType === 'host') {
               this.isP2P = true;
               this.privacyMetrics.connectionMethod = 'direct';
@@ -122,7 +120,6 @@ export default class ConnectionTester {
         report.p2pStatus = this.isP2P ? '✅ P2P' : '❌ TURN Relay';
       }
 
-      // Bitrate calculation
       const now = Date.now();
       report.timestamp = now;
 
@@ -149,7 +146,6 @@ export default class ConnectionTester {
     loop();
   }
 
-  // Hook into ICE candidate events
   hookIceCandidates() {
     const originalOnicecandidate = this.pc.onicecandidate;
 
@@ -216,7 +212,26 @@ export default class ConnectionTester {
 
   logPrivacyReport() {
     const metrics = this.getPrivacyMetrics();
+    // Guard: p2pStats may be null if stop() is called before any ICE candidates were gathered
     const p2pStats = metrics.p2pSuccessRate;
+    const p2pPct = p2pStats != null ? parseFloat(p2pStats.p2pPercentage) : null;
+
+    // Determine privacy rating safely
+    let privacyRating;
+    if (p2pPct == null) {
+      privacyRating = '⏳ No candidate data yet';
+    } else if (p2pPct >= 70) {
+      privacyRating = `✅ EXCELLENT: ${p2pStats.p2pPercentage}% P2P connections`;
+    } else if (p2pPct >= 50) {
+      privacyRating = `⚠️ GOOD: ${p2pStats.p2pPercentage}% P2P connections`;
+    } else {
+      privacyRating = `❌ POOR: ${p2pStats.p2pPercentage}% P2P connections`;
+    }
+
+    const connectionStatus =
+      this.isP2P === true  ? '✅ Currently using P2P connection' :
+      this.isP2P === false ? '⚠️ Currently relying on TURN' :
+                             '⏳ Connection establishing...';
 
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
@@ -246,8 +261,8 @@ export default class ConnectionTester {
   └─ Priority: ${this.activeCandidatePair?.priority || 'N/A'}
 
  PRIVACY STATUS:
-  ${p2pStats?.p2pPercentage >= 70 ? '✅ EXCELLENT' : p2pStats?.p2pPercentage >= 50 ? '⚠️ GOOD' : '❌ POOR'}: ${p2pStats?.p2pPercentage ?? '0'}% P2P connections
-  ${this.isP2P === true ? '✅ Currently using P2P connection' : this.isP2P === false ? '⚠️ Currently relying on TURN' : '⏳ Connection establishing...'}
+  ${privacyRating}
+  ${connectionStatus}
 
 ╔════════════════════════════════════════════════════════════╗
     `);
@@ -256,7 +271,10 @@ export default class ConnectionTester {
   stop() {
     this.running = false;
     this.logPrivacyReport();
-    this.downloadCSV();
+    // Only attempt CSV download if there is data to write
+    if (this.collectedStats.length > 0) {
+      this.downloadCSV();
+    }
   }
 
   downloadCSV() {
@@ -266,13 +284,15 @@ export default class ConnectionTester {
     }
 
     const privacyMetrics = this.getPrivacyMetrics();
+    const p2pStats = privacyMetrics.p2pSuccessRate;
+
     const metadataLines = [
       '# PRIVACY & P2P METRICS REPORT',
       `# Connection Method,${privacyMetrics.connectionMethod || 'N/A'}`,
       `# Call Duration,${privacyMetrics.callDuration}`,
-      `# P2P Success Rate,${privacyMetrics.p2pSuccessRate?.p2pPercentage ?? 0}%`,
-      `# TURN Usage Rate,${privacyMetrics.p2pSuccessRate?.turnPercentage ?? 0}%`,
-      `# Total Candidates Generated,${privacyMetrics.p2pSuccessRate?.totalCandidates ?? 0}`,
+      `# P2P Success Rate,${p2pStats?.p2pPercentage ?? 0}%`,
+      `# TURN Usage Rate,${p2pStats?.turnPercentage ?? 0}%`,
+      `# Total Candidates Generated,${p2pStats?.totalCandidates ?? 0}`,
       `# Host Candidates,${this.iceCandidates.host}`,
       `# SRFLX Candidates (Hole Punching),${this.iceCandidates.srflx}`,
       `# Relay Candidates (TURN),${this.iceCandidates.relay}`,
@@ -322,8 +342,8 @@ export default class ConnectionTester {
 
     return {
       totalCalls: this.collectedStats.length,
-      p2pSuccessRate: p2pStats?.p2pPercentage + '%' || 'N/A',
-      turnUsageRate: p2pStats?.turnPercentage + '%' || 'N/A',
+      p2pSuccessRate: p2pStats != null ? p2pStats.p2pPercentage + '%' : 'N/A',
+      turnUsageRate: p2pStats != null ? p2pStats.turnPercentage + '%' : 'N/A',
       averageDownloadBitrate: avgDownload + ' bps',
       averageUploadBitrate: avgUpload + ' bps',
       connectionMethod: this.privacyMetrics.connectionMethod,
