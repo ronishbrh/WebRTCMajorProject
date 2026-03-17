@@ -1,5 +1,5 @@
 - [x] QR
-- [x] Better QR.
+- [x] Better QR. Works but Do not apply night theme.
 - [ ] Handle renegotiation, retry call
 - [ ] Make the client PWA
 - [ ] Improve UI for mobile screens.
@@ -13,13 +13,13 @@
 
 # Before Presentation
 - [ ] Check combination between ISPs. Contact them if needed.
-- [ ] make direct P2P possible anyhow.
-- [ ] measure latency, bandwidth, connection establishment time with direct P2P and with TURN relay.
-- [ ] Multiple device bich call test garne within a LAN.
-- [x] Host signaling server on a public backend server.
-- [x] use https and wss between server and client
+- [ ] measure latency, bandwidth, connection establishment time, fps, resolution with direct P2P in LAN, WAN and with TURN relay.
 - [ ] Implement authentication and security between signaling server and the clients.
 - [ ] User lai public key le chinne. even in server. Maile kasaiko key aru bata liye vane usko name ma afno marji le rakhna sakxu(e.g. vai, uncle). server ma name check garnu thik xaina. public key le nai user lai uniqely identify garne.
+- [ ] When relogging the key of the user is changed sometime. Happened on my phone.
+- [x] make direct P2P possible anyhow.
+- [x] Host signaling server on a public backend server.
+- [x] use https and wss between server and client
 - [x] Call aayo vanne indicator or page (only basic initially done)
 - [x] Able to call a specific user.
 - [x] Generate ECDSA key pair

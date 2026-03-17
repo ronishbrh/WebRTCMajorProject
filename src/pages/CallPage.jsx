@@ -820,8 +820,8 @@ export default function CallPage() {
 					</div>
 
 					<div className="absolute bottom-4 left-4 bg-black/70 px-3 py-2 rounded text-xs text-green-300">
-						<div>⬇ Download: {liveStats.downloadBitrate} kbps</div>
-						<div>⬆ Upload: {liveStats.uploadBitrate} kbps</div>
+						<div>⬇ Download: {liveStats.downloadBitrate} kBps</div>
+						<div>⬆ Upload: {liveStats.uploadBitrate} kBps</div>
 						<div>📶 Latency: {liveStats.rtt ? `${liveStats.rtt} ms` : 'N/A'}</div>
 						<div>Jitter: {liveStats.jitter} s</div>
 						<div>Lost: {liveStats.packetsLost}</div>
