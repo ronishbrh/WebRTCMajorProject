@@ -42,7 +42,7 @@ export default function CallPage() {
 		outboundFPS: 0, outboundResolutionWidth: 0, outboundResolutionHeight: 0,
 	});
 	const [hasRemoteStream, setHasRemoteStream] = useState(false);
-	// Controls auto-hide on mobile
+
 	const [controlsVisible, setControlsVisible] = useState(true);
 	const controlsTimerRef = useRef(null);
 
@@ -64,7 +64,6 @@ export default function CallPage() {
 	const [callAnswered, setCallAnswered] = useState(false);
 	const callTimeoutRef = useRef(null);
 
-	// ---- Controls auto-hide on mobile ----
 	const showControls = useCallback(() => {
 		setControlsVisible(true);
 		if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
@@ -72,7 +71,7 @@ export default function CallPage() {
 	}, []);
 
 	useEffect(() => {
-		// Start auto-hide timer
+		// auto-hide timer
 		showControls();
 		return () => {
 			if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
@@ -118,7 +117,7 @@ export default function CallPage() {
 		}
 	}, []);
 
-	// ---- End call + navigate home ----
+	
 	const endCallAndNavigate = useCallback(() => {
 		cleanupMedia();
 		navigate("/");
@@ -484,7 +483,7 @@ export default function CallPage() {
 		if (track) { track.enabled = !track.enabled; setIsAudioOn(track.enabled); }
 	};
 
-	// ---- Shared sub-components ----
+
 	const StatsPanel = ({ compact = false }) => (
 		<div className={`bg-black/80 backdrop-blur rounded-lg text-green-300 font-mono ${compact ? "text-xs p-2 grid grid-cols-2 gap-x-3 gap-y-0.5" : "text-xs p-3 space-y-0.5"}`}>
 			<div>⬇ {liveStats.downloadBitrate} kBps</div>
@@ -543,10 +542,9 @@ export default function CallPage() {
 
 
 	return (
-		// Full-screen black container, everything absolutely positioned inside
 		<div className="fixed inset-0 bg-black text-white overflow-hidden" onClick={showControls}>
 
-			{/* ── REMOTE VIDEO (always full screen behind everything) ── */}
+	
 			<video
 				ref={remoteVideoRef}
 				autoPlay
@@ -581,7 +579,6 @@ export default function CallPage() {
 				</div>
 			</div>
 
-			{/* ── STATS TOGGLE BUTTON (top-left) ── */}
 			<button
 				onClick={(e) => { e.stopPropagation(); setShowStats(s => !s); showControls(); }}
 				className={`absolute top-3 left-3 z-20 px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${showStats ? "bg-green-700 text-white" : "bg-black/60 text-green-400 hover:bg-black/80"}`}
@@ -603,7 +600,7 @@ export default function CallPage() {
 				</div>
 			)}
 
-			{/* ── SETTINGS PANEL (floating above controls) ── */}
+			{/* ── SETTINGS PANEL ── */}
 			{showSettings && (
 				<div
 					className="absolute bottom-24 left-1/2 -translate-x-1/2 z-30"
@@ -614,7 +611,7 @@ export default function CallPage() {
 			)}
 
 			{/* ── BOTTOM CONTROLS BAR ── */}
-			{/* On mobile: auto-hides after 4s of inactivity. On desktop: always visible. */}
+		
 			<div
 				className={`
 					absolute bottom-0 left-0 right-0 z-20
@@ -664,7 +661,7 @@ export default function CallPage() {
 				</button>
 			</div>
 
-			{/* ── TAP TO SHOW CONTROLS hint (mobile only, when controls hidden) ── */}
+
 			{!controlsVisible && (
 				<div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 md:hidden">
 					<p className="text-white/30 text-xs">Tap to show controls</p>

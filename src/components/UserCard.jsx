@@ -25,7 +25,7 @@ export default function UserCard({ user, onClick, onCall, onDelete }) {
     }
   };
 
-  // Navigate to ContactPage with edit mode
+  //ContactPage with edit mode
   const handleEdit = async (e) => {
     e.stopPropagation();
     
@@ -37,12 +37,10 @@ export default function UserCard({ user, onClick, onCall, onDelete }) {
       let publicKeyString = user.publicKey;
       
       if (user.publicKey && typeof user.publicKey === 'object' && user.publicKey.type === 'public') {
-        // It's a CryptoKey, export it to base64
         console.log("Exporting CryptoKey to base64...");
         publicKeyString = await exportECDSAPublicKey(user.publicKey);
         console.log("Exported public key (first 50 chars):", publicKeyString.substring(0, 50));
       } else if (typeof user.publicKey === 'string') {
-        // Already a string, use as-is
         console.log("Public key is already a string");
         publicKeyString = user.publicKey;
       } else {
@@ -51,7 +49,7 @@ export default function UserCard({ user, onClick, onCall, onDelete }) {
       
       const contactData = {
         userName: user.name,
-        publicKey: publicKeyString,  // ✅ Base64 string!
+        publicKey: publicKeyString,  //Base64 string!
         signalingServerURL: user.signalingServerURL || ""
       };
       
@@ -60,7 +58,7 @@ export default function UserCard({ user, onClick, onCall, onDelete }) {
         originalUserName: user.name,
         contact: {
           ...contactData,
-          publicKey: contactData.publicKey.substring(0, 50) + "..." // Show first 50 chars
+          publicKey: contactData.publicKey.substring(0, 50) + "..." 
         }
       });
       

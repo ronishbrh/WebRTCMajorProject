@@ -34,7 +34,7 @@ export default function ContactPage() {
             
             setUserName(existingContact.userName || "");
             
-            // Handle public key - should be a string now
+            //public key - should be a string now
             if (existingContact.publicKey) {
                 console.log("Public key type:", typeof existingContact.publicKey);
                 console.log("Public key (first 50 chars):", 
@@ -216,7 +216,6 @@ export default function ContactPage() {
         }
     };
 
-    // Handle Cancel
     const handleCancel = () => {
         navigate("/");
     };

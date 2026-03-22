@@ -1,4 +1,4 @@
-// Step 2: Generate ECDH Key Pair for shared secret
+
 export async function generateECDHKeys() {
 	return await crypto.subtle.generateKey(
 		{
@@ -51,7 +51,7 @@ export async function importECDSAPrivateKey(base64) {
 }
 
 
-// Step 4: Derive shared secret from ECDH public and private keys
+//ecdh shared scret derive 
 export async function deriveSharedSecret(privateKey, publicKey) {
 	const sharedBits = await crypto.subtle.deriveBits(
 		{
@@ -59,37 +59,37 @@ export async function deriveSharedSecret(privateKey, publicKey) {
 			public: publicKey,
 		},
 		privateKey,
-		256 // Generate 256-bit shared secret
+		256 
 	);
 	return sharedBits;
 }
 
-// Step 5: Import shared secret to create an AES key
+
 export async function importAESKey(sharedSecret) {
 	return await crypto.subtle.importKey(
 		"raw", // Format
 		sharedSecret, // Shared secret
-		{ name: "AES-GCM", length: 256 }, // AES-GCM key with 256 bits
+		{ name: "AES-GCM", length: 256 }, 
 		false, // Not extractable
 		["encrypt", "decrypt"] // Usages: encrypt and decrypt
 	);
 }
 
-// Step 6: Encrypt data with AES-GCM
+
 export async function encryptAES(data, aesKey) {
-	const iv = crypto.getRandomValues(new Uint8Array(12)); // Generate random IV (12 bytes)
+	const iv = crypto.getRandomValues(new Uint8Array(12)); //random IV (12 bytes)
 	const encrypted = await crypto.subtle.encrypt(
 		{
 			name: "AES-GCM",
-			iv: iv, // Initialization Vector
+			iv: iv, 
 		},
-		aesKey, // AES Key
+		aesKey, 
 		data
 	);
 	return { iv, encrypted };
 }
 
-// Step 7: Decrypt data with AES-GCM
+//with AES-GCM
 export async function decryptAES(encryptedData, aesKey, iv) {
 	try {
 		const decrypted = await crypto.subtle.decrypt(
@@ -106,7 +106,7 @@ export async function decryptAES(encryptedData, aesKey, iv) {
 	}
 }
 
-// Step 3: Sign the nonce with ECDSA to authenticate the user
+//Sign the nonce with ECDSA to authenticate the user
 export async function signChallenge(privateKey, challenge) {
 	//const encoder = new TextEncoder();
 	const signature = await crypto.subtle.sign(
@@ -120,7 +120,6 @@ export async function signChallenge(privateKey, challenge) {
 	return signature;
 }
 
-// Updated to handle both CryptoKey objects and base64 strings
 export async function verifyChallenge(publicKey, challenge, signature) {
 	// If publicKey is a string (base64), import it first
 	if (typeof publicKey === 'string') {

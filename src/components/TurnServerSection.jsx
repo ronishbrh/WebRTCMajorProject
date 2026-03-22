@@ -9,23 +9,18 @@ const identityManager = new IdentityManager();
 export default function TurnServerSection() {
   const { identity } = useUser();
   
-  // Manual servers from database
   const [servers, setServers] = useState([]);
   
-  // Metered servers fetched from API
   const [meterredServers, setMeterredServers] = useState([]);
-  
-  // Form inputs for manual server
+
   const [url, setUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  
-  // UI state
+ 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState(""); // "success" or "error"
   const [loading, setLoading] = useState(false);
 
-  // Load manually added servers on mount
   useEffect(() => {
     if (!identity) return;
 
@@ -42,12 +37,12 @@ export default function TurnServerSection() {
     loadServers();
   }, [identity]);
 
-  // Fetch Metered servers on mount
+  //Metered servers on mount
   useEffect(() => {
     fetchMeterredServers();
   }, []);
 
-  // Fetch from Metered API
+
   const fetchMeterredServers = async () => {
     setLoading(true);
     try {
@@ -73,7 +68,7 @@ export default function TurnServerSection() {
     }
   };
 
-  // Add manual server
+  //manual server
   const addServer = async () => {
     if (!url.trim()) {
       setMessage("X Please enter a server URL");
@@ -90,7 +85,6 @@ export default function TurnServerSection() {
         source: "manual"
       };
 
-      // Save to database
       await identityManager.addTurnServer(identity.userName, serverObj);
       
       // Update local state

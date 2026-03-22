@@ -15,13 +15,13 @@ export default function HomePage() {
   const [contacts, setContacts] = useState([]);
   const [incomingCall, setIncomingCall] = useState(null);
   const [signalingServer, setSignalingServer] = useState(null);
-  const [serverCheckStatus, setServerCheckStatus] = useState({});  // Track which servers are online/offline
+  const [serverCheckStatus, setServerCheckStatus] = useState({});  
 
   const wsRef = useRef(null);
   const registeredRef = useRef(false);
   const contactsRef = useRef([]);
 
-  /* ---------------- LOAD SIGNALING SERVER (active server) ---------------- */
+  /* LOAD SIGNALING SERVER (active server) ---------------- */
   useEffect(() => {
     if (!identity) {
       navigate("/login");
@@ -64,7 +64,6 @@ export default function HomePage() {
         return;
       }
 
-      // Set timeout for server check
       const timeout = setTimeout(() => {
         console.log(`Server check timeout for ${serverURL}`);
         resolve(false);  // Server is offline
@@ -75,14 +74,14 @@ export default function HomePage() {
 
         ws.onopen = () => {
           clearTimeout(timeout);
-          console.log(`Server ${serverURL} is ONLINE ✅`);
+          console.log(`Server ${serverURL} is ONLINE`);
           ws.close();
           resolve(true);  // Server is online
         };
 
         ws.onerror = () => {
           clearTimeout(timeout);
-          console.log(`Server ${serverURL} is OFFLINE ❌`);
+          console.log(`Server ${serverURL} is OFFLINE`);
           resolve(false);  // Server is offline
         };
 
@@ -204,7 +203,6 @@ export default function HomePage() {
       if (contact.signalingServerURL) {
         console.log("Contact has custom server, checking connectivity:", contact.signalingServerURL);
         
-        // Show loading state
         setServerCheckStatus(prev => ({
           ...prev,
           [contact.userName]: "checking"
@@ -228,7 +226,6 @@ export default function HomePage() {
             `Please try again later or contact ${contact.userName} to check their server status.`
           );
 
-          // Clear status after 3 seconds
           setTimeout(() => {
             setServerCheckStatus(prev => {
               const newStatus = { ...prev };
