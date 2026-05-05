@@ -46,6 +46,8 @@ export default function CallPage() {
 	const [controlsVisible, setControlsVisible] = useState(true);
 	const controlsTimerRef = useRef(null);
 
+	const [showError, setShowError] = useState(false);
+
 	const pcRef = useRef(null);
 	const wsRef = useRef(null);
 	const pendingCandidates = useRef([]);
@@ -117,7 +119,7 @@ export default function CallPage() {
 		}
 	}, []);
 
-	
+
 	const endCallAndNavigate = useCallback(() => {
 		cleanupMedia();
 		navigate("/");
@@ -304,7 +306,7 @@ export default function CallPage() {
 				endCallAndNavigate();
 			}, 2500);
 		}
-	
+
 	}, [identity, contact, cleanupMedia, navigate, endCallAndNavigate]);
 
 	async function sendCandidate(candidate) {
@@ -327,6 +329,18 @@ export default function CallPage() {
 		if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 		wsRef.current.send(JSON.stringify({ type: "join", from: identity.userName, to: contact.userName }));
 	}
+
+	useEffect(() => {
+		if (error) {
+			setShowError(true);
+			const timer = setTimeout(() => {
+				setShowError(false);
+				
+			}, 5000); 
+
+			return () => clearTimeout(timer); 
+		}
+	}, [error]);
 
 	// ---- Init ----
 	useEffect(() => {
@@ -544,7 +558,7 @@ export default function CallPage() {
 	return (
 		<div className="fixed inset-0 bg-black text-white overflow-hidden" onClick={showControls}>
 
-	
+
 			<video
 				ref={remoteVideoRef}
 				autoPlay
@@ -594,7 +608,7 @@ export default function CallPage() {
 			)}
 
 			{/* ── ERROR ── */}
-			{error && (
+			{showError && error && (
 				<div className="absolute top-14 left-3 z-20 bg-red-700/90 text-white px-4 py-2 rounded-lg text-sm shadow-lg max-w-xs">
 					{error}
 				</div>
@@ -611,7 +625,7 @@ export default function CallPage() {
 			)}
 
 			{/* ── BOTTOM CONTROLS BAR ── */}
-		
+
 			<div
 				className={`
 					absolute bottom-0 left-0 right-0 z-20
