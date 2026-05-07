@@ -15,11 +15,21 @@ export default function HomePage() {
   const [contacts, setContacts] = useState([]);
   const [incomingCall, setIncomingCall] = useState(null);
   const [signalingServer, setSignalingServer] = useState(null);
-  const [serverCheckStatus, setServerCheckStatus] = useState({});  
+  const [serverCheckStatus, setServerCheckStatus] = useState({});
+
+  const [selectedServer, setSelectedServer] = useState(
+    localStorage.getItem("selectedSignalingServer") || null
+  );
 
   const wsRef = useRef(null);
   const registeredRef = useRef(false);
   const contactsRef = useRef([]);
+
+  useEffect(() => {
+    if (selectedServer) {
+      localStorage.setItem("selectedSignalingServer", selectedServer);
+    }
+  }, [selectedServer]);
 
   /* LOAD SIGNALING SERVER (active server) ---------------- */
   useEffect(() => {
@@ -151,7 +161,7 @@ export default function HomePage() {
         }
 
         setIncomingCall({ from: data.from, contact });
-		console.log("Call request received at ", Date.now());
+        console.log("Call request received at ", Date.now());
       }
 
       /* -------- Caller cancelled -------- */
@@ -185,24 +195,26 @@ export default function HomePage() {
   }, [identity, signalingServer, incomingCall]);
 
   /* ---------------- CALL HANDLER - Uses contact's server if available -------- */
-  const handleCall = async (contact) => {
+  const handleCall = async (contact, selectedServerFromUI) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       alert("Connection not ready. Please wait.");
       return;
     }
 
-	  console.log("Calling at ", Date.now());
+    console.log("Calling at ", Date.now());
 
     try {
-      // Determine which server to use
-      const serverToUse = contact.signalingServerURL || signalingServer;
+      const serverToUse =
+        selectedServerFromUI ||
+        contact.signalingServerURL ||
+        signalingServer;
 
       console.log("Checking server connectivity before calling", contact.userName);
 
       // Check if contact's server is reachable
       if (contact.signalingServerURL) {
         console.log("Contact has custom server, checking connectivity:", contact.signalingServerURL);
-        
+
         setServerCheckStatus(prev => ({
           ...prev,
           [contact.userName]: "checking"
@@ -212,7 +224,7 @@ export default function HomePage() {
 
         if (!isServerOnline) {
           console.error(`Contact's server is offline: ${contact.signalingServerURL}`);
-          
+
           setServerCheckStatus(prev => ({
             ...prev,
             [contact.userName]: "offline"
@@ -299,7 +311,7 @@ export default function HomePage() {
   const acceptCall = async () => {
     if (!incomingCall) return;
 
-	  console.log("Accepting call at ", Date.now());
+    console.log("Accepting call at ", Date.now());
 
     try {
       const serverToUse = incomingCall.contact.signalingServerURL || signalingServer;
@@ -408,11 +420,14 @@ export default function HomePage() {
                           .toUpperCase()}`,
                       status: contact.status || 'Available',
                       publicKey: contact.publicKey,
-                      signalingServerURL: contact.signalingServerURL
+                      signalingServers: contact.signalingServers || []
                     }}
+                    allContacts={contacts}
                     onClick={() => handleCall(contact)}
-                    onCall={() => handleCall(contact)}
+                    onCall={() => handleCall(contact, selectedServer)}
                     onDelete={() => handleDelete(contact)}
+                    selectedServer={selectedServer}
+                    onSelectServer={setSelectedServer}
                   />
 
                   {/* Server Status Indicator */}

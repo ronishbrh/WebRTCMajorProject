@@ -173,29 +173,43 @@ export default function SignalingServerSection() {
         const loadServers = async () => {
             try {
                 setLoading(true);
-                const activeServerData = await identityManager.getActiveSignallingServer(identity.userName);
-                let activeURL = null;
-                if (activeServerData) {
-                    activeURL = typeof activeServerData === 'object' && activeServerData.url
-                        ? activeServerData.url
-                        : typeof activeServerData === 'string' ? activeServerData : null;
-                }
-                setActiveServer(activeURL);
 
-                const contacts = await identityManager.getContacts(identity.userName);
+                const record = await identityManager._getObject("keys", identity.userName);
+
+                const contacts = record.contacts || [];
+                const userServers = record.signalingServers || [];
+
                 const serverMap = new Map();
-                if (contacts && Array.isArray(contacts)) {
-                    contacts.forEach(contact => {
-                        if (contact.signalingServerURL) {
-                            if (!serverMap.has(contact.signalingServerURL)) serverMap.set(contact.signalingServerURL, []);
-                            serverMap.get(contact.signalingServerURL).push(contact.userName);
+
+                userServers.forEach(s => {
+                    serverMap.set(s.url, {
+                        url: s.url,
+                        owners: [s.owner || "You"],
+                        status: 'checking'
+                    });
+                });
+
+
+                contacts.forEach(contact => {
+                    (contact.signalingServers || []).forEach(url => {
+
+                        if (!serverMap.has(url)) {
+                            serverMap.set(url, {
+                                url,
+                                owners: [contact.userName],
+                                status: 'checking'
+                            });
+                        } else {
+                            serverMap.get(url).owners.push(contact.userName);
                         }
                     });
-                }
-                setServers(Array.from(serverMap.entries()).map(([url, owners]) => ({ url, owners, status: 'checking' })));
+                });
+
+                setServers(Array.from(serverMap.values()));
                 setError(null);
+
             } catch (err) {
-                console.error('Failed to load servers:', err);
+                console.error(err);
                 setError(err.message);
                 setServers([]);
             } finally {
@@ -222,6 +236,17 @@ export default function SignalingServerSection() {
         servers.forEach(server => { if (!testingServers[server.url]) testServer(server.url); });
     }, [servers]);
 
+    useEffect(() => {
+        const loadActive = async () => {
+            if (!identity?.userName) return;
+
+            const active = await identityManager.getActiveSignallingServer(identity.userName);
+            setActiveServer(active);
+        };
+
+        loadActive();
+    }, [identity?.userName]);
+
     const handleSetActive = async (serverURL) => {
         try {
             await identityManager.setActiveSignallingServer(identity.userName, serverURL);
@@ -244,24 +269,62 @@ export default function SignalingServerSection() {
     };
 
     const handleAddServer = async () => {
-        if (!newServerURL.trim()) { alert('Please enter a valid server URL'); return; }
-        try { new URL(newServerURL); } catch { alert('Invalid URL format'); return; }
+        if (!newServerURL.trim()) {
+            alert('Please enter a valid server URL');
+            return;
+        }
+
+        try {
+            new URL(newServerURL);
+        } catch {
+            alert('Invalid URL format');
+            return;
+        }
+
         try {
             setAddingServer(true);
-            if (servers.some(s => s.url === newServerURL)) { alert('This server URL already exists'); return; }
+
+            if (servers.some(s => s.url === newServerURL)) {
+                alert('This server URL already exists');
+                return;
+            }
+
             let serverStatus = 'checking';
-            const timeout = setTimeout(() => { serverStatus = 'offline'; }, 3000);
+
             const ws = new WebSocket(newServerURL);
-            ws.onopen = () => { clearTimeout(timeout); serverStatus = 'online'; ws.close(); finishAddingServer(); };
-            ws.onerror = () => { clearTimeout(timeout); serverStatus = 'offline'; finishAddingServer(); };
-            const finishAddingServer = () => {
-                setServers([...servers, { url: newServerURL, owners: [], status: serverStatus }]);
+
+            ws.onopen = async () => {
+                ws.close();
+
+                await identityManager.addSignallingServer(
+                    identity.userName,
+                    newServerURL,
+                    "manual"
+                );
+
+                setServers(prev => [
+                    ...prev,
+                    {
+                        url: newServerURL,
+                        owners: ["You"],
+                        status: "online"
+                    }
+                ]);
+
                 setNewServerURL('');
-                setTestingServers(prev => ({ ...prev, [newServerURL]: serverStatus }));
-                if (!activeServer) setActiveServer(newServerURL);
+                setAddingServer(false);
             };
-        } catch (err) { console.error('Failed to add server:', err); alert('Failed to add server'); }
-        finally { setAddingServer(false); }
+
+            ws.onerror = () => {
+                alert("Server is offline or unreachable");
+                setAddingServer(false);
+            };
+
+        } catch (err) {
+            console.error(err);
+            alert('Failed to add server');
+            setAddingServer(false);
+        }
     };
 
     if (loading) {

@@ -4,7 +4,7 @@ import Navbar from "../components/Navbar.jsx";
 import { useUser } from "../utils/UserContext";
 import { IdentityManager } from "../utils/IdentityManager.js";
 import { importECDSAPublicKey } from "../utils/crypto.js";
-import { Html5Qrcode } from "html5-qrcode";
+import { BrowserMultiFormatReader } from "@zxing/browser";
 import { Camera, Upload } from "lucide-react";
 
 export default function ContactPage() {
@@ -19,35 +19,31 @@ export default function ContactPage() {
 
     const [userName, setUserName] = useState("");
     const [publicKey, setPublicKey] = useState("");
-    const [signalingURL, setSignalingURL] = useState("");
+
+    const [signalingURLs, setSignalingURLs] = useState([""]);
+
     const [message, setMessage] = useState("");
-    const [messageType, setMessageType] = useState(""); // "success" or "error"
+    const [messageType, setMessageType] = useState("");
 
     const qrRegionId = "qr-reader";
+
     const qrScannerRef = useRef(null);
 
-    // Load existing contact data if in edit mode
+
     useEffect(() => {
         if (editMode && existingContact) {
-            console.log("ContactPage - Edit Mode Activated");
-            console.log("Existing contact data:", existingContact);
-            
+
             setUserName(existingContact.userName || "");
-            
-            //public key - should be a string now
-            if (existingContact.publicKey) {
-                console.log("Public key type:", typeof existingContact.publicKey);
-                console.log("Public key (first 50 chars):", 
-                    typeof existingContact.publicKey === 'string' 
-                        ? existingContact.publicKey.substring(0, 50)
-                        : "[object Object]"
-                );
-                setPublicKey(existingContact.publicKey || "");
-            }
-            
-            setSignalingURL(existingContact.signalingServerURL || "");
-        } else {
-            console.log("ContactPage - Add Mode (New Contact)");
+
+            setPublicKey(existingContact.publicKey || "");
+
+            const servers =
+                existingContact.signalingServers ||
+                (existingContact.signalingServerURL
+                    ? [existingContact.signalingServerURL]
+                    : []);
+
+            setSignalingURLs(servers.length ? servers : [""]);
         }
     }, [editMode, existingContact]);
 
@@ -61,95 +57,74 @@ export default function ContactPage() {
         }
 
         try {
-            console.log("Submitting form...");
-            console.log("Public key (first 50 chars):", publicKey.substring(0, 50));
-            
-            // Import public key from base64 string to CryptoKey
-            const importedKey = await importECDSAPublicKey(publicKey.trim());
-            console.log("Public key imported successfully");
+            const importedKey =
+                await importECDSAPublicKey(publicKey.trim());
+
+            const cleanedServers = signalingURLs
+                .map(url => url.trim())
+                .filter(url => url !== "");
+
+            const contact = {
+                userName,
+                publicKey: importedKey,
+                signalingServers: cleanedServers
+            };
 
             if (editMode) {
-                
-                const contact = {
-                    userName,
-                    publicKey: importedKey,  
-                    signalingServerURL: signalingURL || null,
-                };
 
-            
                 await identityManager.updateContact(
                     identity.userName,
                     originalUserName,
                     contact
                 );
-                console.log("Contact updated in IdentityManager");
 
-               
-                if (originalUserName !== userName) {
-                    console.log("Username changed, recreating contact entry");
-                   
-                    await identityManager.deleteContact(identity.userName, originalUserName);
-                    await identityManager.addContact(identity.userName, contact);
-                }
+                const cleanedServers = signalingURLs
+                    .map(url => url.trim())
+                    .filter(Boolean);
 
-              
-                if (signalingURL) {
-                    await identityManager.updateContactSignalingServer(
-                        identity.userName,
-                        userName,
-                        signalingURL
-                    );
-
-                  
+                for (const url of cleanedServers) {
                     await identityManager.addSignallingServer(
                         identity.userName,
-                        signalingURL,
-                        userName // owner's name
-                    );
-                } else {
-                   
-                    await identityManager.updateContactSignalingServer(
-                        identity.userName,
-                        userName,
-                        null
+                        url,
+                        userName
                     );
                 }
+
+
 
                 setMessage("Contact updated successfully!");
                 setMessageType("success");
 
-                setTimeout(() => {
-                    navigate("/");
-                }, 1500);
             } else {
-                console.log("Adding new contact");
-                
-                const existingContacts = identity.contacts || [];
+
+                const existingContacts =
+                    identity.contacts || [];
 
                 const duplicate = existingContacts.find(
-                    (c) => c.userName === userName
+                    c => c.userName === userName
                 );
+
                 if (duplicate) {
-                    setMessage("Contact with this username already exists!");
+                    setMessage(
+                        "Contact with this username already exists!"
+                    );
                     setMessageType("error");
                     return;
                 }
 
-                const contact = {
-                    userName,
-                    publicKey: importedKey,  
-                    signalingServerURL: signalingURL || null,
-                };
+                await identityManager.addContact(
+                    identity.userName,
+                    contact
+                );
 
-                await identityManager.addContact(identity.userName, contact);
                 identity.contacts.push(contact);
-                console.log("Contact added successfully");
 
-                if (signalingURL) {
+                // ADD TO GLOBAL SIGNALING SERVER LIST
+                for (const url of cleanedServers) {
                     await identityManager.addSignallingServer(
                         identity.userName,
-                        signalingURL,
-                        userName // owner's name
+                        url,
+                        userName
                     );
                 }
 
@@ -158,43 +133,62 @@ export default function ContactPage() {
 
                 setUserName("");
                 setPublicKey("");
-                setSignalingURL("");
-
-                setTimeout(() => {
-                    navigate("/");
-                }, 1500);
+                setSignalingURLs([""]);
             }
+
+            setTimeout(() => {
+                navigate("/");
+            }, 1500);
+
         } catch (err) {
-            console.error("Error during submit:", err);
+            console.error(err);
+
             setMessage(
-                editMode 
+                editMode
                     ? "Failed to update contact: " + err.message
                     : "Failed to add contact: " + err.message
             );
+
             setMessageType("error");
         }
     };
 
+    const controlsRef = useRef(null);
+
     const startScanner = async () => {
         if (qrScannerRef.current) return;
 
-        const scanner = new Html5Qrcode(qrRegionId);
-        qrScannerRef.current = scanner;
+        const reader = new BrowserMultiFormatReader();
+        qrScannerRef.current = reader;
 
         try {
-            await scanner.start(
-                { facingMode: "environment" },
-                { fps: 10, qrbox: 250 },
-                (decodedText) => {
-                    console.log("QR code scanned");
-                    setPublicKey(decodedText.trim());
-                    scanner.stop();
-                    qrScannerRef.current = null;
+            const videoElement = document.getElementById("qr-reader");
+
+            const devices = await BrowserMultiFormatReader.listVideoInputDevices();
+
+            const backCamera =
+                devices.find(d => d.label.toLowerCase().includes("back")) ||
+                devices[0];
+
+            controlsRef.current = await reader.decodeFromVideoDevice(
+                backCamera?.deviceId,
+                videoElement,
+                (result, err) => {
+                    if (result) {
+                        setPublicKey(result.getText().trim());
+
+                        // ✅ STOP CAMERA PROPERLY
+                        controlsRef.current?.stop();
+
+                        qrScannerRef.current = null;
+                        controlsRef.current = null;
+                    }
                 }
             );
+
         } catch (err) {
             console.error(err);
-            alert("Unable to access camera");
+            alert("Camera access failed");
             qrScannerRef.current = null;
         }
     };
@@ -203,13 +197,15 @@ export default function ContactPage() {
         const file = e.target.files[0];
         if (!file) return;
 
-        const scanner = new Html5Qrcode(qrRegionId);
-
         try {
-            console.log("Scanning QR code from file...");
-            const decodedText = await scanner.scanFile(file, true);
-            setPublicKey(decodedText.trim());
-            console.log("QR code file scanned successfully");
+            const reader = new BrowserMultiFormatReader();
+
+            const result = await reader.decodeFromImageUrl(
+                URL.createObjectURL(file)
+            );
+
+            setPublicKey(result.getText().trim());
+
         } catch (err) {
             console.error(err);
             alert("Invalid QR code image");
@@ -227,13 +223,15 @@ export default function ContactPage() {
         }
 
         return () => {
-            qrScannerRef.current?.stop().catch(() => { });
+            controlsRef.current?.stop();
             qrScannerRef.current = null;
+            controlsRef.current = null;
         };
     }, [identity, navigate]);
 
     return (
         <div className="w-full min-h-screen flex flex-col">
+
             <Navbar
                 onHomeClick={() => navigate("/")}
                 onProfileClick={() => navigate("/profile")}
@@ -241,129 +239,198 @@ export default function ContactPage() {
             />
 
             <main className="p-4 sm:p-6 flex-1 max-w-md mx-auto">
+
                 <h2 className="text-2xl font-semibold mb-4">
                     {editMode ? "Edit Contact" : "Add New Contact"}
                 </h2>
 
-                <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-                    {/* Username */}
+                <form
+                    className="flex flex-col gap-4"
+                    onSubmit={handleSubmit}
+                >
+
+                    {/* USERNAME */}
                     <div>
+
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                             Contact Username *
                         </label>
+
                         <input
                             type="text"
                             placeholder="Enter contact username"
-                            className="w-full border border-gray-300 p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full border border-gray-300 p-2 rounded"
                             value={userName}
-                            onChange={(e) => setUserName(e.target.value)}
+                            onChange={(e) =>
+                                setUserName(e.target.value)
+                            }
                             disabled={editMode}
                         />
-                        {editMode && (
-                            <p className="text-xs text-gray-500 mt-1">
-                                Username cannot be changed
-                            </p>
-                        )}
+
                     </div>
 
-                    {/* Public Key */}
+                    {/* PUBLIC KEY */}
                     <div>
+
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                             Contact Public Key *
                         </label>
+
                         <div className="flex items-center gap-2">
+
                             <input
                                 type="text"
-                                placeholder="Enter contact public key or scan QR"
-                                className="flex-1 border border-gray-300 p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="Enter public key"
+                                className="flex-1 border border-gray-300 p-2 rounded"
                                 value={publicKey}
-                                onChange={(e) => setPublicKey(e.target.value)}
+                                onChange={(e) =>
+                                    setPublicKey(e.target.value)
+                                }
                             />
 
                             <button
                                 type="button"
                                 onClick={startScanner}
-                                title="Scan QR Code"
-                                className="p-2 border border-gray-300 rounded hover:bg-gray-100 transition"
+                                className="p-2 border rounded"
                             >
                                 <Camera size={20} />
                             </button>
 
-                            <label title="Upload QR Code">
+                            <label>
                                 <input
                                     type="file"
                                     accept="image/*"
                                     onChange={handleFileUpload}
                                     className="hidden"
                                 />
-                                <div className="p-2 border border-gray-300 rounded cursor-pointer hover:bg-gray-100 transition">
+
+                                <div className="p-2 border rounded cursor-pointer">
                                     <Upload size={20} />
                                 </div>
                             </label>
+
                         </div>
-                        
-                        {publicKey && (
-                            <div className="mt-2 p-2 bg-gray-100 rounded border border-gray-300">
-                                <p className="text-xs text-gray-600 font-semibold mb-1">Public Key Preview:</p>
-                                <p className="text-xs font-mono break-all text-gray-700">
-                                    {publicKey.substring(0, 100)}
-                                    {publicKey.length > 100 ? "..." : ""}
-                                </p>
-                            </div>
-                        )}
+
                     </div>
 
-                    {/* Camera preview */}
-                    <div
-                        id={qrRegionId}
-                        className="w-full border border-gray-300 rounded overflow-hidden"
+                    {/* CAMERA */}
+                    <video
+                        id="qr-reader"
+                        className="w-full h-72 border rounded bg-black"
                     />
 
-                    {/* Signaling Server URL */}
+                    {/* MULTIPLE SIGNALING SERVERS */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Signaling Server URL (Optional)
+
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Signaling Servers
                         </label>
-                        <input
-                            type="text"
-                            placeholder="e.g., wss://server.example.com"
-                            className="w-full border border-gray-300 p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            value={signalingURL}
-                            onChange={(e) => setSignalingURL(e.target.value)}
-                        />
+
+                        <div className="flex flex-col gap-2">
+
+                            {signalingURLs.map((url, index) => (
+
+                                <div
+                                    key={index}
+                                    className="flex gap-2"
+                                >
+
+                                    <input
+                                        type="text"
+                                        placeholder="wss://server.example.com"
+                                        className="flex-1 border border-gray-300 p-2 rounded"
+                                        value={url}
+                                        onChange={(e) => {
+
+                                            const updated =
+                                                [...signalingURLs];
+
+                                            updated[index] =
+                                                e.target.value;
+
+                                            setSignalingURLs(updated);
+                                        }}
+                                    />
+
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+
+                                            const updated =
+                                                signalingURLs.filter(
+                                                    (_, i) => i !== index
+                                                );
+
+                                            setSignalingURLs(
+                                                updated.length
+                                                    ? updated
+                                                    : [""]
+                                            );
+                                        }}
+                                        className="px-4 bg-red-500 text-white rounded"
+                                    >
+                                        X
+                                    </button>
+
+                                </div>
+
+                            ))}
+
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={() =>
+                                setSignalingURLs([
+                                    ...signalingURLs,
+                                    ""
+                                ])
+                            }
+                            className="mt-2 px-3 py-2 bg-gray-200 rounded"
+                        >
+                            + Add Server
+                        </button>
+
                     </div>
 
-                    {/* Buttons */}
+                    {/* BUTTONS */}
                     <div className="flex gap-2">
+
                         <button
                             type="submit"
-                            className="flex-1 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition font-medium"
+                            className="flex-1 bg-blue-600 text-white px-4 py-2 rounded"
                         >
-                            {editMode ? "Update Contact" : "Add Contact"}
+                            {editMode
+                                ? "Update Contact"
+                                : "Add Contact"}
                         </button>
+
                         <button
                             type="button"
                             onClick={handleCancel}
-                            className="flex-1 bg-gray-300 text-gray-800 px-4 py-2 rounded hover:bg-gray-400 transition font-medium"
+                            className="flex-1 bg-gray-300 px-4 py-2 rounded"
                         >
                             Cancel
                         </button>
+
                     </div>
+
                 </form>
 
-                {/* Message */}
+                {/* MESSAGE */}
                 {message && (
                     <div
-                        className={`mt-4 p-3 rounded text-sm ${
-                            messageType === "success"
-                                ? "bg-green-50 text-green-800 border border-green-200"
-                                : "bg-red-50 text-red-800 border border-red-200"
-                        }`}
+                        className={`mt-4 p-3 rounded text-sm ${messageType === "success"
+                            ? "bg-green-50 text-green-800 border border-green-200"
+                            : "bg-red-50 text-red-800 border border-red-200"
+                            }`}
                     >
                         {message}
                     </div>
                 )}
+
             </main>
+
         </div>
     );
 }

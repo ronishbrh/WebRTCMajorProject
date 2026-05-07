@@ -22,7 +22,9 @@ const RESOLUTIONS = {
 export default function CallPage() {
 	const location = useLocation();
 	const contact = location.state?.contact;
-	const signalingServer = location.state?.signalingServer;
+	const [signalingServer, setSignalingServer] = useState(
+		location.state?.signalingServer || null
+	);
 
 	const localVideoRef = useRef(null);
 	const remoteVideoRef = useRef(null);
@@ -73,12 +75,27 @@ export default function CallPage() {
 	}, []);
 
 	useEffect(() => {
+		const loadServer = async () => {
+			const fallback =
+				location.state?.signalingServer ||
+				(await identityManager.getActiveSignallingServer(identity.userName)) ||
+				"wss://webrtc-signaling-server-up3e.onrender.com";
+
+			setSignalingServer(fallback);
+		};
+
+		if (identity && contact) loadServer();
+	}, [identity, contact, location.state]);
+
+	useEffect(() => {
 		// auto-hide timer
 		showControls();
 		return () => {
 			if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
 		};
 	}, [showControls]);
+
+
 
 	// ---- Media helpers ----
 	const requestMediaStream = async (resolutionKey) => {
@@ -335,10 +352,10 @@ export default function CallPage() {
 			setShowError(true);
 			const timer = setTimeout(() => {
 				setShowError(false);
-				
-			}, 5000); 
 
-			return () => clearTimeout(timer); 
+			}, 5000);
+
+			return () => clearTimeout(timer);
 		}
 	}, [error]);
 
