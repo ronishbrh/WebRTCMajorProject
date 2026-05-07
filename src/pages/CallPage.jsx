@@ -9,7 +9,6 @@ import {
 import ConnectionTester from "../utils/ConnectionTester";
 import { getIceServersConfig } from "../utils/meterredTurnServer";
 import { FiCamera, FiCameraOff, FiMic, FiMicOff, FiPhoneCall, FiSettings, FiX } from "react-icons/fi";
-import { IdentityManager } from "../utils/IdentityManager";
 
 // Resolution presets
 const RESOLUTIONS = {
@@ -52,8 +51,7 @@ export default function CallPage() {
 	const pendingIceCandidates = useRef([]);
 	const ECDHKeyPair = useRef(null);
 	const AESKey = useRef(null);
-	const { identity } = useUser();
-	const identityManager = new IdentityManager();
+	const { identityManager } = useUser();
 
 	const navigate = useNavigate();
 
@@ -128,12 +126,12 @@ export default function CallPage() {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
 			wsRef.current.send(JSON.stringify({
 				type: "end-call",
-				from: identity.userName,
+				from: identityManager.getUserName(),
 				to: contact.userName,
 			}));
 		}
 		endCallAndNavigate();
-	}, [identity, contact, endCallAndNavigate]);
+	}, [identityManager, contact, endCallAndNavigate]);
 
 	// ---- Signaling message handler ----
 	const handleSignalingMessage = useCallback(async (data) => {
@@ -165,12 +163,12 @@ export default function CallPage() {
 
 		if (message.type === "join") {
 			const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
-			const signature = await signChallenge(identity.privateKey, rawPubKey);
+			const signature = await signChallenge(identityManager.getPrivateKey(), rawPubKey);
 			wsRef.current.send(JSON.stringify({
 				type: "challenge1",
 				publicKey: arrayBufferToBase64(rawPubKey),
 				signature: arrayBufferToBase64(signature),
-				from: identity.userName,
+				from: identityManager.getUserName(),
 				to: contact.userName,
 			}));
 		}
@@ -184,12 +182,12 @@ export default function CallPage() {
 			const valid = await verifyChallenge(contactPublicKey, rawECDH, signature);
 			if (valid) {
 				const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
-				const sig = await signChallenge(identity.privateKey, rawPubKey);
+				const sig = await signChallenge(identityManager.getPrivateKey(), rawPubKey);
 				wsRef.current.send(JSON.stringify({
 					type: "challenge2",
 					publicKey: arrayBufferToBase64(rawPubKey),
 					signature: arrayBufferToBase64(sig),
-					from: identity.userName,
+					from: identityManager.getUserName(),
 					to: contact.userName,
 				}));
 
@@ -236,7 +234,7 @@ export default function CallPage() {
 					type: "offer",
 					offer: arrayBufferToBase64(encrypted),
 					iv: arrayBufferToBase64(iv),
-					from: identity.userName,
+					from: identityManager.getUserName(),
 					to: contact.userName,
 				}));
 			} else {
@@ -264,7 +262,7 @@ export default function CallPage() {
 				type: "answer",
 				answer: arrayBufferToBase64(encAns),
 				iv: arrayBufferToBase64(ansiv),
-				from: identity.userName,
+				from: identityManager.getUserName(),
 				to: contact.userName,
 			}));
 		}
@@ -306,7 +304,7 @@ export default function CallPage() {
 			}, 2500);
 		}
 	
-	}, [identity, contact, cleanupMedia, navigate, endCallAndNavigate]);
+	}, [identityManager, contact, cleanupMedia, navigate, endCallAndNavigate]);
 
 	async function sendCandidate(candidate) {
 		if (!AESKey.current) {
@@ -319,22 +317,22 @@ export default function CallPage() {
 			type: "ice",
 			candidate: arrayBufferToBase64(encrypted),
 			iv: arrayBufferToBase64(iv),
-			from: identity.userName,
+			from: identityManager.getUserName(),
 			to: contact.userName,
 		}));
 	}
 
 	async function startHandshake() {
 		if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-		wsRef.current.send(JSON.stringify({ type: "join", from: identity.userName, to: contact.userName }));
+		wsRef.current.send(JSON.stringify({ type: "join", from: identityManager.getUserName(), to: contact.userName }));
 	}
 
 	// ---- Init ----
 	useEffect(() => {
 		let active = true;
 
-		if (!identity || !contact || !signalingServer) {
-			if (!identity || !contact) navigate("/login");
+		if (!identityManager || !contact || !signalingServer) {
+			if (!identityManager || !contact) navigate("/login");
 			return;
 		}
 
@@ -348,7 +346,7 @@ export default function CallPage() {
 			if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
 			let manualTurnServers = [];
-			try { manualTurnServers = await identityManager.getTurnServers(identity.userName); }
+			try { manualTurnServers = await identityManager.getTurnServers(); }
 			catch (err) { console.error("Failed to load manual TURN servers:", err); }
 
 			let iceServersConfig = await getIceServersConfig(manualTurnServers);
@@ -402,14 +400,14 @@ export default function CallPage() {
 			wsRef.current = ws;
 
 			ws.onopen = () => {
-				ws.send(JSON.stringify({ type: "register", userName: identity.userName }));
+				ws.send(JSON.stringify({ type: "register", userName: identityManager.getUserName() }));
 
 				if (callInitiatedFromHome) {
 					setIsCalling(true);
-					ws.send(JSON.stringify({ type: "call-request", from: identity.userName, to: contact.userName }));
+					ws.send(JSON.stringify({ type: "call-request", from: identityManager.getUserName(), to: contact.userName }));
 					callTimeoutRef.current = setTimeout(() => {
 						if (!callAnswered) {
-							ws.send(JSON.stringify({ type: "call-cancelled", from: identity.userName, to: contact.userName }));
+							ws.send(JSON.stringify({ type: "call-cancelled", from: identityManager.getUserName(), to: contact.userName }));
 							cleanupMedia();
 							navigate("/");
 						}
@@ -418,7 +416,7 @@ export default function CallPage() {
 
 				if (incomingCallAccepted) {
 					setCallAnswered(true);
-					ws.send(JSON.stringify({ type: "call-accepted", from: identity.userName, to: contact.userName }));
+					ws.send(JSON.stringify({ type: "call-accepted", from: identityManager.getUserName(), to: contact.userName }));
 				}
 			};
 
@@ -433,11 +431,11 @@ export default function CallPage() {
 			cleanupMedia();
 		};
 
-	}, [signalingServer, identity, contact, callInitiatedFromHome, incomingCallAccepted]);
+	}, [signalingServer, identityManager, contact, callInitiatedFromHome, incomingCallAccepted]);
 
 	const cancelCalling = () => {
 		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-			wsRef.current.send(JSON.stringify({ type: "call-cancelled", from: identity.userName, to: contact.userName }));
+			wsRef.current.send(JSON.stringify({ type: "call-cancelled", from: identityManager.getUserName(), to: contact.userName }));
 		}
 		cleanupMedia();
 		navigate("/");

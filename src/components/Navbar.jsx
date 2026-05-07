@@ -5,7 +5,7 @@ import { useUser } from "../utils/UserContext";
 //const profileIcon = "https://via.placeholder.com/80";
 
 export default function Navbar({ onHomeClick, onProfileClick, onContactClick, onServerClick}) {
-  const {identity} = useUser();
+  const {identityManager} = useUser();
   const location = useLocation()
   return (
     <nav className="w-full bg-white shadow px-4 py-3 sm:px-6 sm:py-4 flex items-center justify-between">
@@ -43,7 +43,7 @@ export default function Navbar({ onHomeClick, onProfileClick, onContactClick, on
         />
 
         <div className="hidden sm:block leading-tight text-right">
-          <p className="font-medium">{identity?.userName || "Loading..."}</p>
+          <p className="font-medium">{identityManager.getUserName() || "Loading..."}</p>
           
         </div>
       </div>

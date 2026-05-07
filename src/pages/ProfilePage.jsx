@@ -4,7 +4,6 @@ import { QRCodeCanvas } from "qrcode.react";
 import { FiCopy } from "react-icons/fi";
 import { FaQrcode } from "react-icons/fa";
 
-import { IdentityManager } from "../utils/IdentityManager.js";
 import Navbar from "../components/Navbar.jsx";
 import { useUser } from "../utils/UserContext";
 import { exportECDSAPublicKey } from "../utils/crypto";
@@ -13,10 +12,9 @@ import profileIcon from "../assets/userProfileGeneric.png";
 
 export default function ProfilePage() {
   const navigate = useNavigate();
-  const { identity } = useUser();
-  const identityManager = new IdentityManager();
+  const { identityManager } = useUser();
 
-  const [name, setName] = useState(identity?.userName);
+  const [name, setName] = useState(identityManager.getUserName());
   const [pubKey, setPubKey] = useState("");
   const [showQR, setShowQR] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -27,17 +25,11 @@ export default function ProfilePage() {
 
 
   const saveName = async () => {
-    if (!identity || name.trim() === "" || name === identity.userName) return;
+    if (!identityManager || name.trim() === "" || name === identityManager.getUserName()) return;
 
     try {
       setSaving(true);
-      const updated = await identityManager.updateUsername(
-        identity.userName,
-        name
-      );
-
-      setName(updated.userName);
-      identity.userName = name;
+      await identityManager.updateUsername( name);
 
       setSavedMessage("Username updated!");
       setTimeout(() => setSavedMessage(""), 2000);
@@ -87,18 +79,18 @@ export default function ProfilePage() {
  
 
   useEffect(() => {
-    if (!identity) {
+    if (!identityManager) {
       navigate("/");
       return;
     }
 
     const loadKey = async () => {
-      const keyText = await exportECDSAPublicKey(identity.publicKey);
+      const keyText = await exportECDSAPublicKey(identityManager.getPublicKey());
       setPubKey(keyText);
     };
 
     loadKey();
-  }, [identity, navigate]);
+  }, [identityManager, navigate]);
 
 
   return (
@@ -132,7 +124,7 @@ export default function ProfilePage() {
                 onChange={(e) => setName(e.target.value)}
               />
 
-              {name !== identity?.userName && (
+              {name !== identityManager.getUserName() && (
                 <button
                   onClick={saveName}
                   disabled={saving}

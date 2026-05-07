@@ -1,11 +1,9 @@
 import { useState, useEffect } from "react";
-import { IdentityManager } from "../utils/IdentityManager";
 import { useUser } from "../utils/UserContext";
 
-const identityManager = new IdentityManager();
 
 export default function StunServerSection() {
-    const { identity } = useUser()
+    const { identitiyManager } = useUser()
 
     const [servers, setServers] = useState([]);
     const [input, setInput] = useState("");
@@ -16,9 +14,9 @@ export default function StunServerSection() {
 
         if (!input) return;
 
-        await identityManager.addStunServer(identity.userName, input);
+        await identityManager.addStunServer(input);
 
-        const updated = await identityManager.getStunServers(identity.userName);
+        const updated = await identityManager.getStunServers();
 
         setServers(updated);
         setInput("");
@@ -28,9 +26,9 @@ export default function StunServerSection() {
 
     const deleteServer = async (url) => {
 
-        await identityManager.deleteStunServer(identity.userName, url);
+        await identityManager.deleteStunServer(url);
 
-        const updated = await identityManager.getStunServers(identity.userName);
+        const updated = await identityManager.getStunServers();
 
         setServers(updated);
 
@@ -113,15 +111,15 @@ export default function StunServerSection() {
 
         const loadServers = async () => {
 
-            if (!identity) return;
+            if (!identitiyManager) return;
 
-            let stored = await identityManager.getStunServers(identity.userName);
+            let stored = await identityManager.getStunServers();
 
             if (!stored || stored.length === 0) {
 
                 const defaultServer = "stun:stun.l.google.com:19302";
 
-                await identityManager.addStunServer(identity.userName, defaultServer);
+                await identityManager.addStunServer(defaultServer);
 
                 stored = [defaultServer];
             }
@@ -133,7 +131,7 @@ export default function StunServerSection() {
 
         loadServers();
 
-    }, [identity]);
+    }, [identitiyManager]);
 
     return (
         <div>

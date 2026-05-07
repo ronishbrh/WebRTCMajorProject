@@ -2,7 +2,6 @@ import { useEffect, useState, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import Navbar from "../components/Navbar.jsx";
 import { useUser } from "../utils/UserContext";
-import { IdentityManager } from "../utils/IdentityManager.js";
 import { importECDSAPublicKey } from "../utils/crypto.js";
 import { Html5Qrcode } from "html5-qrcode";
 import { Camera, Upload } from "lucide-react";
@@ -10,8 +9,7 @@ import { Camera, Upload } from "lucide-react";
 export default function ContactPage() {
     const navigate = useNavigate();
     const location = useLocation();
-    const { identity } = useUser();
-    const identityManager = new IdentityManager();
+    const { identityManager } = useUser();
 
     const editMode = location.state?.editMode || false;
     const originalUserName = location.state?.originalUserName || null;
@@ -78,40 +76,23 @@ export default function ContactPage() {
 
             
                 await identityManager.updateContact(
-                    identity.userName,
                     originalUserName,
                     contact
                 );
                 console.log("Contact updated in IdentityManager");
 
                
-                if (originalUserName !== userName) {
-                    console.log("Username changed, recreating contact entry");
-                   
-                    await identityManager.deleteContact(identity.userName, originalUserName);
-                    await identityManager.addContact(identity.userName, contact);
-                }
+                //if (originalUserName !== userName) {
+                //    console.log("Username changed, recreating contact entry");
+                //   
+                //    await identityManager.deleteContact(identityManager.userName, originalUserName);
+                //    await identityManager.addContact(identityManager.userName, contact);
+                //}
 
               
                 if (signalingURL) {
-                    await identityManager.updateContactSignalingServer(
-                        identity.userName,
-                        userName,
-                        signalingURL
-                    );
-
-                  
                     await identityManager.addSignallingServer(
-                        identity.userName,
                         signalingURL,
-                        userName // owner's name
-                    );
-                } else {
-                   
-                    await identityManager.updateContactSignalingServer(
-                        identity.userName,
-                        userName,
-                        null
                     );
                 }
 
@@ -124,11 +105,12 @@ export default function ContactPage() {
             } else {
                 console.log("Adding new contact");
                 
-                const existingContacts = identity.contacts || [];
+                const existingContacts = identityManager.getContacts();
 
                 const duplicate = existingContacts.find(
                     (c) => c.userName === userName
                 );
+
                 if (duplicate) {
                     setMessage("Contact with this username already exists!");
                     setMessageType("error");
@@ -141,15 +123,12 @@ export default function ContactPage() {
                     signalingServerURL: signalingURL || null,
                 };
 
-                await identityManager.addContact(identity.userName, contact);
-                identity.contacts.push(contact);
+                await identityManager.addContact(contact);
                 console.log("Contact added successfully");
 
                 if (signalingURL) {
                     await identityManager.addSignallingServer(
-                        identity.userName,
                         signalingURL,
-                        userName // owner's name
                     );
                 }
 
@@ -222,7 +201,7 @@ export default function ContactPage() {
     };
 
     useEffect(() => {
-        if (!identity) {
+        if (!identityManager) {
             navigate("/login");
             return;
         }
@@ -231,7 +210,7 @@ export default function ContactPage() {
             qrScannerRef.current?.stop().catch(() => { });
             qrScannerRef.current = null;
         };
-    }, [identity, navigate]);
+    }, [identityManager, navigate]);
 
     return (
         <div className="w-full min-h-screen flex flex-col">

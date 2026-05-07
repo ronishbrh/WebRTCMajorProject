@@ -3,12 +3,10 @@ import { createContext, useContext, useState } from "react";
 const UserContext = createContext(null);
 
 export function UserProvider({ children }) {
-	const [identity, setIdentity] = useState(null);
-
-	
+	const [identityManager, setIdentityManager] = useState(null);
 
 	return (
-		<UserContext.Provider value={{ identity, setIdentity }}>
+		<UserContext.Provider value={{ identityManager, setIdentityManager }}>
 			{children}
 		</UserContext.Provider>
 	);

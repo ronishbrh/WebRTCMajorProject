@@ -1,13 +1,11 @@
 import { useState, useEffect } from "react";
 import { useUser } from "../utils/UserContext";
-import { IdentityManager } from "../utils/IdentityManager";
 import { getMeterredTurnServers } from "../utils/meterredTurnServer";
 import { FiTrash2, FiRefreshCw, FiCheck } from "react-icons/fi";
 
-const identityManager = new IdentityManager();
 
 export default function TurnServerSection() {
-  const { identity } = useUser();
+  const { identityManager } = useUser();
   
   // Manual servers from database
   const [servers, setServers] = useState([]);
@@ -27,11 +25,11 @@ export default function TurnServerSection() {
 
   // Load manually added servers on mount
   useEffect(() => {
-    if (!identity) return;
+    if (!identityManager) return;
 
     const loadServers = async () => {
       try {
-        const turnServers = await identityManager.getTurnServers(identity.userName);
+        const turnServers = await identityManager.getTurnServers();
         setServers(turnServers || []);
         console.log("Loaded manual TURN servers:", turnServers);
       } catch (err) {
@@ -40,7 +38,7 @@ export default function TurnServerSection() {
     };
 
     loadServers();
-  }, [identity]);
+  }, [identityManager]);
 
   // Fetch Metered servers on mount
   useEffect(() => {
@@ -91,7 +89,7 @@ export default function TurnServerSection() {
       };
 
       // Save to database
-      await identityManager.addTurnServer(identity.userName, serverObj);
+      await identityManager.addTurnServer(serverObj);
       
       // Update local state
       setServers([...servers, serverObj]);
@@ -115,7 +113,7 @@ export default function TurnServerSection() {
   // Delete manual server
   const deleteServer = async (serverUrl) => {
     try {
-      await identityManager.deleteTurnServer(identity.userName, serverUrl);
+      await identityManager.deleteTurnServer(serverUrl);
       setServers(servers.filter(s => s.url !== serverUrl));
 
       setMessage("TURN server deleted");

@@ -4,13 +4,11 @@ import Navbar from "../components/Navbar.jsx";
 import UserCard from "../components/UserCard";
 import SignalingServerSection from "../components/SignalingServerSection";
 import { useUser } from "../utils/UserContext";
-import { IdentityManager } from "../utils/IdentityManager";
 
-const identityManager = new IdentityManager();
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const { identity } = useUser();
+  const { identityManager } = useUser();
 
   const [contacts, setContacts] = useState([]);
   const [incomingCall, setIncomingCall] = useState(null);
@@ -23,13 +21,13 @@ export default function HomePage() {
 
   /* ---------------- LOAD SIGNALING SERVER (active server) ---------------- */
   useEffect(() => {
-    if (!identity) {
+    if (!identityManager) {
       navigate("/login");
       return;
     }
 
     const loadServer = async () => {
-      const server = await identityManager.getActiveSignallingServer(identity.userName);
+      const server = await identityManager.getActiveSignallingServer();
 
       // fallback to Render server if none stored
       const finalServer =
@@ -40,21 +38,21 @@ export default function HomePage() {
     };
 
     loadServer();
-  }, [identity, navigate]);
+  }, [identityManager, navigate]);
 
   /* ---------------- LOAD CONTACTS ---------------- */
   useEffect(() => {
-    if (!identity) return;
+    if (!identityManager) return;
 
     const loadContacts = async () => {
-      const list = await identityManager.getContacts(identity.userName);
+      const list = await identityManager.getContacts();
       setContacts(list);
       contactsRef.current = list;
       console.log("Loaded contacts:", list);
     };
 
     loadContacts();
-  }, [identity]);
+  }, [identityManager]);
 
   /* ---------------- CHECK SERVER CONNECTIVITY -------- */
   const checkServerConnectivity = async (serverURL) => {
@@ -99,7 +97,7 @@ export default function HomePage() {
 
   /* ---------------- WEBSOCKET CONNECTION (for incoming calls) ---------------- */
   useEffect(() => {
-    if (!identity || !signalingServer) return;
+    if (!identityManager || !signalingServer) return;
 
     if (wsRef.current) {
       wsRef.current.close();
@@ -118,7 +116,7 @@ export default function HomePage() {
         ws.send(
           JSON.stringify({
             type: "register",
-            userName: identity.userName,
+            userName: identityManager.getUserName(),
           })
         );
 
@@ -143,7 +141,7 @@ export default function HomePage() {
           ws.send(
             JSON.stringify({
               type: "call-declined",
-              from: identity.userName,
+              from: identityManager.getUserName(),
               to: data.from,
             })
           );
@@ -183,7 +181,7 @@ export default function HomePage() {
     return () => {
       console.log("HomePage unmounted");
     };
-  }, [identity, signalingServer, incomingCall]);
+  }, [identityManager, signalingServer, incomingCall]);
 
   /* ---------------- CALL HANDLER - Uses contact's server if available -------- */
   const handleCall = async (contact) => {
@@ -252,7 +250,7 @@ export default function HomePage() {
       // If contact has their own server, set it as active
       if (contact.signalingServerURL) {
         console.log("Setting contact's server as active:", contact.signalingServerURL);
-        await identityManager.setActiveSignallingServer(identity.userName, contact.signalingServerURL);
+        await identityManager.setActiveSignallingServer(contact.signalingServerURL);
         setSignalingServer(contact.signalingServerURL);
       }
 
@@ -283,7 +281,6 @@ export default function HomePage() {
   const handleDelete = async (contact) => {
     try {
       await identityManager.deleteContact(
-        identity.userName,
         contact.userName
       );
 
@@ -301,8 +298,6 @@ export default function HomePage() {
   /* ---------------- ACCEPT CALL -------- */
   const acceptCall = async () => {
     if (!incomingCall) return;
-
-	  console.log("Accepting call at ", Date.now());
 
     try {
       const serverToUse = incomingCall.contact.signalingServerURL || signalingServer;
@@ -322,7 +317,7 @@ export default function HomePage() {
           wsRef.current.send(
             JSON.stringify({
               type: "call-declined",
-              from: identity.userName,
+              from: identityManager.getUserName(),
               to: incomingCall.from,
             })
           );
@@ -346,7 +341,7 @@ export default function HomePage() {
       // If caller has their own server, set it as active
       if (incomingCall.contact.signalingServerURL) {
         console.log("Setting caller's server as active:", incomingCall.contact.signalingServerURL);
-        await identityManager.setActiveSignallingServer(identity.userName, incomingCall.contact.signalingServerURL);
+        await identityManager.setActiveSignallingServer(incomingCall.contact.signalingServerURL);
         setSignalingServer(incomingCall.contact.signalingServerURL);
       }
 
@@ -372,7 +367,7 @@ export default function HomePage() {
     wsRef.current.send(
       JSON.stringify({
         type: "call-declined",
-        from: identity.userName,
+        from: identityManager.getUserName(),
         to: incomingCall.from,
       })
     );

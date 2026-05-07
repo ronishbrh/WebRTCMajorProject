@@ -11,14 +11,14 @@ export default function ServerPage() {
     const [section, setSection] = useState("stun");
 
 
-    const { identity } = useUser();
+    const { identityManager } = useUser();
 
     useEffect(() => {
-        if (!identity) {
+        if (!identityManager) {
             navigate("/login");
             return;
         }
-    }, [identity, navigate]);
+    }, [identityManager, navigate]);
 
     return (
         <>

@@ -1,12 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useUser } from '../utils/UserContext';
-import { IdentityManager } from '../utils/IdentityManager';
 import { FiTrash2, FiPlus, FiCheck } from 'react-icons/fi';
 
-const identityManager = new IdentityManager();
 
 export default function SignalingServerSection() {
-    const { identity } = useUser();
+    const { identityManager } = useUser();
     const [servers, setServers] = useState([]);
     const [activeServer, setActiveServer] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -17,7 +15,7 @@ export default function SignalingServerSection() {
 
 
     useEffect(() => {
-        if (!identity?.userName) {
+        if (!identityManager.getUserName()) {
             setLoading(false);
             return;
         }
@@ -26,7 +24,7 @@ export default function SignalingServerSection() {
             try {
                 setLoading(true);
 
-                const activeServerData = await identityManager.getActiveSignallingServer(identity.userName);
+                const activeServerData = await identityManager.getActiveSignallingServer();
                 let activeURL = null;
 
                 if (activeServerData) {
@@ -39,7 +37,7 @@ export default function SignalingServerSection() {
 
                 setActiveServer(activeURL);
 
-                const contacts = await identityManager.getContacts(identity.userName);
+                const contacts = await identityManager.getContacts();
 
                 const serverMap = new Map();
 
@@ -73,7 +71,7 @@ export default function SignalingServerSection() {
         };
 
         loadServers();
-    }, [identity?.userName]);
+    }, [identityManager.getUserName()]);
 
     const testServer = async (serverURL) => {
         setTestingServers(prev => ({ ...prev, [serverURL]: 'checking' }));
@@ -113,7 +111,7 @@ export default function SignalingServerSection() {
 
     const handleSetActive = async (serverURL) => {
         try {
-            await identityManager.setActiveSignallingServer(identity.userName, serverURL);
+            await identityManager.setActiveSignallingServer(serverURL);
             setActiveServer(serverURL);
         } catch (err) {
             console.error('Failed to set active server:', err);
@@ -129,13 +127,12 @@ export default function SignalingServerSection() {
 
         try {
             // Remove all servers from contacts that use this URL
-            const contacts = await identityManager.getContacts(identity.userName);
+            const contacts = await identityManager.getContacts();
 
             for (const contact of contacts) {
                 if (contact.signalingServerURL === serverURL) {
                     // Update contact to remove server
                     await identityManager.updateContactSignalingServer(
-                        identity.userName,
                         contact.userName,
                         null
                     );
@@ -262,7 +259,7 @@ export default function SignalingServerSection() {
                         onChange={(e) => setNewServerURL(e.target.value)}
                         placeholder="Enter server URL (e.g., wss://...)"
                         className="flex-1 px-3 py-2 border border-purple-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                        onKeyPress={(e) => e.key === 'Enter' && handleAddServer()}
+                        onKeyUp={(e) => e.key === 'Enter' && handleAddServer()}
                     />
                     <button
                         onClick={handleAddServer}
