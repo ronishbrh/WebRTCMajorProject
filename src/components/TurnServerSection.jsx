@@ -7,23 +7,18 @@ import { FiTrash2, FiRefreshCw, FiCheck } from "react-icons/fi";
 export default function TurnServerSection() {
   const { identityManager } = useUser();
   
-  // Manual servers from database
   const [servers, setServers] = useState([]);
   
-  // Metered servers fetched from API
   const [meterredServers, setMeterredServers] = useState([]);
-  
-  // Form inputs for manual server
+
   const [url, setUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  
-  // UI state
+ 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState(""); // "success" or "error"
   const [loading, setLoading] = useState(false);
 
-  // Load manually added servers on mount
   useEffect(() => {
     if (!identityManager) return;
 
@@ -40,12 +35,12 @@ export default function TurnServerSection() {
     loadServers();
   }, [identityManager]);
 
-  // Fetch Metered servers on mount
+  //Metered servers on mount
   useEffect(() => {
     fetchMeterredServers();
   }, []);
 
-  // Fetch from Metered API
+
   const fetchMeterredServers = async () => {
     setLoading(true);
     try {
@@ -71,7 +66,7 @@ export default function TurnServerSection() {
     }
   };
 
-  // Add manual server
+  //manual server
   const addServer = async () => {
     if (!url.trim()) {
       setMessage("X Please enter a server URL");

@@ -1,69 +1,104 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FiTrash2, FiCopy, FiCheck, FiEdit2 } from "react-icons/fi";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { exportECDSAPublicKey } from "../utils/crypto";
 
-export default function UserCard({ user, onClick, onCall, onDelete }) {
+export default function UserCard({ user, allContacts, onClick, onCall, onDelete}) {
+
+ 
+  const [selectedServer, setSelectedServer] = useState(user.contact.selectedSignallingServer)
+  const [serverStatusMap, setServerStatusMap] = useState({});
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
   const navigate = useNavigate();
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [copiedServerURL, setCopiedServerURL] = useState(false);
 
-  // Copy URL to clipboard
-  const handleCopyServerURL = async (e) => {
-    e.stopPropagation();
-    try {
-      await navigator.clipboard.writeText(user.signalingServerURL);
-      setCopiedServerURL(true);
-      setTimeout(() => {
-        setCopiedServerURL(false);
-      }, 2000);
-    } catch (err) {
-      console.error('Failed to copy URL:', err);
-      alert('Failed to copy URL');
-    }
+
+  const checkServer = async (url) => {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(false), 2000);
+
+      try {
+        const ws = new WebSocket(url);
+
+        ws.onopen = () => {
+          clearTimeout(timeout);
+          ws.close();
+          resolve(true);
+        };
+
+        ws.onerror = () => {
+          clearTimeout(timeout);
+          resolve(false);
+        };
+      } catch {
+        clearTimeout(timeout);
+        resolve(false);
+      }
+    });
   };
 
-  // Navigate to ContactPage with edit mode
+
+  const getAllServers = () => {
+    if (!allContacts) return [];
+
+    const servers = [];
+
+    allContacts.forEach(c => {
+      const list = c.signallingServers ;
+
+      list.forEach(url => servers.push(url));
+    });
+
+    return [...new Set(servers)]; // remove duplicates
+  };
+
+  const contactServers = user.signalingServers || [];
+
+  const globalServers = getAllServers();
+
+  const commonServers = contactServers.filter(url =>
+    globalServers.includes(url)
+  );
+
   const handleEdit = async (e) => {
     e.stopPropagation();
-    
+
     try {
       console.log("Edit clicked. Public key type:", typeof user.publicKey);
       console.log("Public key value:", user.publicKey);
-      
-      // Export public key if it's a CryptoKey object
+
+
       let publicKeyString = user.publicKey;
-      
+
       if (user.publicKey && typeof user.publicKey === 'object' && user.publicKey.type === 'public') {
-        // It's a CryptoKey, export it to base64
-        console.log("Exporting CryptoKey to base64...");
+
         publicKeyString = await exportECDSAPublicKey(user.publicKey);
-        console.log("Exported public key (first 50 chars):", publicKeyString.substring(0, 50));
+
       } else if (typeof user.publicKey === 'string') {
-        // Already a string, use as-is
-        console.log("Public key is already a string");
+
         publicKeyString = user.publicKey;
       } else {
         console.warn("Unexpected public key format:", user.publicKey);
       }
-      
+
       const contactData = {
         userName: user.name,
-        publicKey: publicKeyString,  // ✅ Base64 string!
-        signalingServerURL: user.signalingServerURL || ""
+        publicKey: publicKeyString,
+        signalingServers: user.signalingServers || []
       };
-      
+
       console.log("Navigating to ContactPage with:", {
         editMode: true,
         originalUserName: user.name,
         contact: {
           ...contactData,
-          publicKey: contactData.publicKey.substring(0, 50) + "..." // Show first 50 chars
+          publicKey: contactData.publicKey.substring(0, 50) + "..."
         }
       });
-      
+
       navigate("/contact", {
         state: {
           editMode: true,
@@ -76,6 +111,21 @@ export default function UserCard({ user, onClick, onCall, onDelete }) {
       alert("Failed to edit contact. Error: " + err.message);
     }
   };
+
+
+  useEffect(() => {
+    const checkAll = async () => {
+      const result = {};
+
+      for (const url of commonServers) {
+        result[url] = await checkServer(url);
+      }
+
+      setServerStatusMap(result);
+    };
+
+    if (commonServers.length) checkAll();
+  }, [commonServers]);
 
   return (
     <div
@@ -94,32 +144,57 @@ export default function UserCard({ user, onClick, onCall, onDelete }) {
         </div>
       </div>
 
-      {user.signalingServerURL && (
+      {commonServers.length > 0 && (
         <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-3">
-          <p className="text-xs font-semibold text-gray-600 mb-2">Signaling Server:</p>
-          
-          <div className="flex items-start gap-2">
-            <div className="flex-1 min-w-0">
-              <p className="text-xs sm:text-sm font-mono text-gray-700 break-all bg-white p-2 rounded border border-gray-300">
-                {user.signalingServerURL}
-              </p>
-            </div>
-            
-            <button
-              onClick={handleCopyServerURL}
-              className="p-2 flex-shrink-0 bg-blue-500 hover:bg-blue-600 text-white rounded transition"
-              title="Copy server URL to clipboard"
-            >
-              {copiedServerURL ? (
-                <FiCheck size={16} />
-              ) : (
-                <FiCopy size={16} />
-              )}
-            </button>
-          </div>
 
-          {copiedServerURL && (
-            <p className="text-xs text-green-600 mt-1">✓ Copied to clipboard</p>
+          <p className="text-xs font-semibold text-gray-600 mb-2">
+            Select Signaling Server
+          </p>
+
+          {/* Dropdown header */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setDropdownOpen(!dropdownOpen);
+            }}
+            className="w-full flex items-center justify-between bg-white border p-2 rounded"
+          >
+            <span className="text-xs font-mono truncate">
+              {selectedServer || "Choose server"}
+            </span>
+            <span>{dropdownOpen ? "▲" : "▼"}</span>
+          </button>
+
+          {/* Dropdown list */}
+          {dropdownOpen && (
+            <div className="mt-2 space-y-2">
+              {commonServers.map((url, idx) => {
+                const status = serverStatusMap[url];
+
+                return (
+                  <div
+                    key={idx}
+                    className={`flex items-center justify-between p-2 rounded border cursor-pointer "bg-white"`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedServer(url);
+                      setDropdownOpen(false);
+					  user.contact.selectedSignallingServer = url;
+                    }}
+                  >
+                    <span className="text-xs font-mono break-all flex-1">
+                      {url}
+                    </span>
+
+                    <span className="text-xs ml-2">
+                      {status === true && "🟢"}
+                      {status === false && "🔴"}
+                      {status === undefined && "🟡"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       )}
@@ -153,6 +228,7 @@ export default function UserCard({ user, onClick, onCall, onDelete }) {
         <button
           onClick={(e) => {
             e.stopPropagation();
+            //onCall(selectedServer || commonServers[0]);
             onCall();
           }}
           aria-label={`call-user-${user.name}`}

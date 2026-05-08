@@ -42,7 +42,7 @@ export default class ConnectionTester {
     const loop = async () => {
       if (!this.running) return;
 
-      // Guard: PC may have been closed between the setTimeout firing and this tick
+      //may have been closed between the setTimeout firing 
       if (!this.pc || this.pc.signalingState === 'closed') {
         this.running = false;
         return;
@@ -52,7 +52,6 @@ export default class ConnectionTester {
       try {
         stats = await this.pc.getStats();
       } catch (e) {
-        // PC was closed mid-await — stop the loop silently
         this.running = false;
         return;
       }

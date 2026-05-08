@@ -12,11 +12,11 @@ import { useUser } from "./utils/UserContext";
 export default function App() {
 	const navigate = useNavigate();
 
-	const { setIdentity } = useUser();
+	const { setIdentityManager } = useUser();
 
 	const handleUnlocked = (identity) => {
 
-		setIdentity(identity);
+		setIdentityManager(identity);
 		navigate('/');
 	}
 

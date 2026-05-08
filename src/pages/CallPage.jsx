@@ -4,6 +4,7 @@ import { useUser } from "../utils/UserContext";
 import {
 	arrayBufferToBase64, base64ToArrayBuffer, decryptAES,
 	deriveSharedSecret, encryptAES, generateECDHKeys, importAESKey,
+	importECDSAPrivateKey,
 	importECDSAPublicKey, signChallenge, verifyChallenge
 } from "../utils/crypto";
 import ConnectionTester from "../utils/ConnectionTester";
@@ -21,7 +22,9 @@ const RESOLUTIONS = {
 export default function CallPage() {
 	const location = useLocation();
 	const contact = location.state?.contact;
-	const signalingServer = location.state?.signalingServer;
+	const [signalingServer, setSignalingServer] = useState(
+		location.state?.server || null
+	);
 
 	const localVideoRef = useRef(null);
 	const remoteVideoRef = useRef(null);
@@ -41,9 +44,11 @@ export default function CallPage() {
 		outboundFPS: 0, outboundResolutionWidth: 0, outboundResolutionHeight: 0,
 	});
 	const [hasRemoteStream, setHasRemoteStream] = useState(false);
-	// Controls auto-hide on mobile
+
 	const [controlsVisible, setControlsVisible] = useState(true);
 	const controlsTimerRef = useRef(null);
+
+	const [showError, setShowError] = useState(false);
 
 	const pcRef = useRef(null);
 	const wsRef = useRef(null);
@@ -51,7 +56,8 @@ export default function CallPage() {
 	const pendingIceCandidates = useRef([]);
 	const ECDHKeyPair = useRef(null);
 	const AESKey = useRef(null);
-	const { identityManager } = useUser();
+
+	const { identityManager, getSocket, closeAllSocketsExcept, closeAllSockets} = useUser();
 
 	const navigate = useNavigate();
 
@@ -62,20 +68,22 @@ export default function CallPage() {
 	const [callAnswered, setCallAnswered] = useState(false);
 	const callTimeoutRef = useRef(null);
 
-	// ---- Controls auto-hide on mobile ----
 	const showControls = useCallback(() => {
 		setControlsVisible(true);
 		if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
 		controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 4000);
 	}, []);
 
+
 	useEffect(() => {
-		// Start auto-hide timer
+		// auto-hide timer
 		showControls();
 		return () => {
 			if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
 		};
 	}, [showControls]);
+
+
 
 	// ---- Media helpers ----
 	const requestMediaStream = async (resolutionKey) => {
@@ -107,7 +115,7 @@ export default function CallPage() {
 			pcRef.current = null;
 		}
 		if (wsRef.current) {
-			if (wsRef.current.readyState === WebSocket.OPEN) wsRef.current.close();
+			if (wsRef.current.ws.readyState === WebSocket.OPEN) wsRef.current.close();
 			wsRef.current = null;
 		}
 		if (callTimeoutRef.current) {
@@ -116,195 +124,24 @@ export default function CallPage() {
 		}
 	}, []);
 
-	// ---- End call + navigate home ----
+
 	const endCallAndNavigate = useCallback(() => {
 		cleanupMedia();
+		closeAllSockets();
 		navigate("/");
 	}, [cleanupMedia, navigate]);
 
 	const handleEndCall = useCallback(() => {
-		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-			wsRef.current.send(JSON.stringify({
+		if (wsRef.current && wsRef.current.ws.readyState === WebSocket.OPEN) {
+			wsRef.current.send({
 				type: "end-call",
 				from: identityManager.getUserName(),
 				to: contact.userName,
-			}));
+			});
 		}
 		endCallAndNavigate();
 	}, [identityManager, contact, endCallAndNavigate]);
 
-	// ---- Signaling message handler ----
-	const handleSignalingMessage = useCallback(async (data) => {
-		const message = JSON.parse(data);
-		const pc = pcRef.current;
-
-		if (message.type === "call-cancelled") {
-			cleanupMedia();
-			navigate("/");
-			return;
-		}
-
-		if (message.type === "call-declined") {
-			cleanupMedia();
-			navigate("/");
-			return;
-		}
-
-		if (message.type === "call-accepted") {
-			console.log("Call acceptance received at", Date.now());
-			if (callTimeoutRef.current) {
-				clearTimeout(callTimeoutRef.current);
-				callTimeoutRef.current = null;
-			}
-			setIsCalling(false);
-			setCallAnswered(true);
-			await startHandshake();
-		}
-
-		if (message.type === "join") {
-			const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
-			const signature = await signChallenge(identityManager.getPrivateKey(), rawPubKey);
-			wsRef.current.send(JSON.stringify({
-				type: "challenge1",
-				publicKey: arrayBufferToBase64(rawPubKey),
-				signature: arrayBufferToBase64(signature),
-				from: identityManager.getUserName(),
-				to: contact.userName,
-			}));
-		}
-
-		if (message.type === "challenge1") {
-			const rawECDH = base64ToArrayBuffer(message.publicKey);
-			const signature = base64ToArrayBuffer(message.signature);
-			let contactPublicKey = contact.publicKey;
-			if (typeof contactPublicKey === "string") contactPublicKey = await importECDSAPublicKey(contactPublicKey);
-
-			const valid = await verifyChallenge(contactPublicKey, rawECDH, signature);
-			if (valid) {
-				const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
-				const sig = await signChallenge(identityManager.getPrivateKey(), rawPubKey);
-				wsRef.current.send(JSON.stringify({
-					type: "challenge2",
-					publicKey: arrayBufferToBase64(rawPubKey),
-					signature: arrayBufferToBase64(sig),
-					from: identityManager.getUserName(),
-					to: contact.userName,
-				}));
-
-				const publicKey = await crypto.subtle.importKey("raw", rawECDH, { name: "ECDH", namedCurve: "P-256" }, true, []);
-				const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
-				AESKey.current = await importAESKey(sharedSecret);
-
-				if (pendingIceCandidates.current.length > 0) {
-					for (const candidate of pendingIceCandidates.current) await sendCandidate(candidate);
-					pendingIceCandidates.current = [];
-				}
-			} else {
-				console.error("Unverified signature in challenge1");
-			}
-		}
-
-		if (message.type === "challenge2") {
-			const rawECDH = base64ToArrayBuffer(message.publicKey);
-			const signature = base64ToArrayBuffer(message.signature);
-			let contactPublicKey = contact.publicKey;
-			if (typeof contactPublicKey === "string") {
-				try { contactPublicKey = await importECDSAPublicKey(contactPublicKey); }
-				catch (e) { console.error("Failed to import public key:", e); return; }
-			} else if (!contactPublicKey) return;
-
-			const valid = await verifyChallenge(contactPublicKey, rawECDH, signature);
-			if (valid) {
-				const publicKey = await crypto.subtle.importKey("raw", rawECDH, { name: "ECDH", namedCurve: "P-256" }, true, []);
-				const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
-				AESKey.current = await importAESKey(sharedSecret);
-
-				if (pendingIceCandidates.current.length > 0) {
-					for (const candidate of pendingIceCandidates.current) await sendCandidate(candidate);
-					pendingIceCandidates.current = [];
-				}
-
-				const offer = await pc.createOffer();
-				await pc.setLocalDescription(offer);
-
-				const encoder = new TextEncoder();
-				const sdpBuffer = encoder.encode(offer.sdp);
-				const { iv, encrypted } = await encryptAES(sdpBuffer, AESKey.current);
-				wsRef.current.send(JSON.stringify({
-					type: "offer",
-					offer: arrayBufferToBase64(encrypted),
-					iv: arrayBufferToBase64(iv),
-					from: identityManager.getUserName(),
-					to: contact.userName,
-				}));
-			} else {
-				console.error("Unverified signature in challenge2");
-			}
-		}
-
-		if (message.type === "offer") {
-			const iv = base64ToArrayBuffer(message.iv);
-			const encryptedSDPBuffer = base64ToArrayBuffer(message.offer);
-			const SDPBuffer = await decryptAES(encryptedSDPBuffer, AESKey.current, iv);
-			const sdp = new TextDecoder().decode(SDPBuffer);
-			await pc.setRemoteDescription({ type: "offer", sdp });
-
-			for (const c of pendingCandidates.current) {
-				try { await pc.addIceCandidate(c); } catch (e) { console.error("ICE candidate error", e); }
-			}
-			pendingCandidates.current = [];
-
-			const answer = await pc.createAnswer();
-			await pc.setLocalDescription(answer);
-			const ansSdpBuffer = new TextEncoder().encode(answer.sdp);
-			const { iv: ansiv, encrypted: encAns } = await encryptAES(ansSdpBuffer, AESKey.current);
-			wsRef.current.send(JSON.stringify({
-				type: "answer",
-				answer: arrayBufferToBase64(encAns),
-				iv: arrayBufferToBase64(ansiv),
-				from: identityManager.getUserName(),
-				to: contact.userName,
-			}));
-		}
-
-		if (message.type === "answer") {
-			const iv = base64ToArrayBuffer(message.iv);
-			const encryptedSDPBuffer = base64ToArrayBuffer(message.answer);
-			const SDPBuffer = await decryptAES(encryptedSDPBuffer, AESKey.current, iv);
-			const sdp = new TextDecoder().decode(SDPBuffer);
-			await pc.setRemoteDescription({ type: "answer", sdp });
-
-			for (const c of pendingCandidates.current) {
-				try { await pc.addIceCandidate(c); } catch (e) { console.error("ICE candidate error", e); }
-			}
-			pendingCandidates.current = [];
-			setIsCalling(false);
-			setCallAnswered(true);
-		}
-
-		if (message.type === "ice") {
-			const iv = base64ToArrayBuffer(message.iv);
-			const encryptedCandidateBuffer = base64ToArrayBuffer(message.candidate);
-			const candidateBuffer = await decryptAES(encryptedCandidateBuffer, AESKey.current, iv);
-			const candidate = new RTCIceCandidate(JSON.parse(new TextDecoder().decode(candidateBuffer)));
-
-			if (!pc.currentRemoteDescription) {
-				pendingCandidates.current.push(candidate);
-			} else {
-				try { await pc.addIceCandidate(candidate); }
-				catch (e) { console.error("ICE candidate error", e); }
-			}
-		}
-
-		if (message.type === "end-call") {
-			console.log("Remote user ended call");
-			setShowEndCallNotification(true);
-			setTimeout(() => {
-				endCallAndNavigate();
-			}, 2500);
-		}
-	
-	}, [identityManager, contact, cleanupMedia, navigate, endCallAndNavigate]);
 
 	async function sendCandidate(candidate) {
 		if (!AESKey.current) {
@@ -313,23 +150,37 @@ export default function CallPage() {
 		}
 		const candidateBuffer = new TextEncoder().encode(JSON.stringify(candidate));
 		const { iv, encrypted } = await encryptAES(candidateBuffer, AESKey.current);
-		wsRef.current.send(JSON.stringify({
+		wsRef.current.send({
 			type: "ice",
 			candidate: arrayBufferToBase64(encrypted),
 			iv: arrayBufferToBase64(iv),
 			from: identityManager.getUserName(),
 			to: contact.userName,
-		}));
+		});
 	}
 
-	async function startHandshake() {
-		if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-		wsRef.current.send(JSON.stringify({ type: "join", from: identityManager.getUserName(), to: contact.userName }));
+	function startHandshake() {
+		if (!wsRef.current || wsRef.current.ws.readyState !== WebSocket.OPEN) return;
+		wsRef.current.send({ type: "join", from: identityManager.getUserName(), to: contact.userName });
 	}
+
+	useEffect(() => {
+		if (error) {
+			setShowError(true);
+			const timer = setTimeout(() => {
+				setShowError(false);
+
+			}, 5000);
+
+			return () => clearTimeout(timer);
+		}
+	}, [error]);
 
 	// ---- Init ----
 	useEffect(() => {
 		let active = true;
+
+		let unsubscribers = [];
 
 		if (!identityManager || !contact || !signalingServer) {
 			if (!identityManager || !contact) navigate("/login");
@@ -396,32 +247,211 @@ export default function CallPage() {
 
 			ECDHKeyPair.current = await generateECDHKeys();
 
-			const ws = new WebSocket(signalingServer);
-			wsRef.current = ws;
+			closeAllSocketsExcept(signalingServer);
+			wsRef.current = getSocket(signalingServer);
 
-			ws.onopen = () => {
-				ws.send(JSON.stringify({ type: "register", userName: identityManager.getUserName() }));
+			//let unsubscriber = wsRef.current.subscribe("call-cancelled", (data) => {
+			//	cleanupMedia();
+			//	navigate("/");
+			//	return;
+			//});
 
-				if (callInitiatedFromHome) {
-					setIsCalling(true);
-					ws.send(JSON.stringify({ type: "call-request", from: identityManager.getUserName(), to: contact.userName }));
-					callTimeoutRef.current = setTimeout(() => {
-						if (!callAnswered) {
-							ws.send(JSON.stringify({ type: "call-cancelled", from: identityManager.getUserName(), to: contact.userName }));
-							cleanupMedia();
-							navigate("/");
-						}
-					}, 30000);
+			//unsubscribers.push(unsubscriber);
+
+			let unsubscriber = wsRef.current.subscribe("call-declined", (_data) => {
+				endCallAndNavigate();
+				return;
+			});
+
+			unsubscribers.push(unsubscriber);
+
+			unsubscriber = wsRef.current.subscribe("call-accepted", (_data) => {
+				console.log("Call acceptance received at", Date.now());
+				if (callTimeoutRef.current) {
+					clearTimeout(callTimeoutRef.current);
+					callTimeoutRef.current = null;
 				}
+				setIsCalling(false);
+				setCallAnswered(true);
+				startHandshake();
+			});
 
-				if (incomingCallAccepted) {
-					setCallAnswered(true);
-					ws.send(JSON.stringify({ type: "call-accepted", from: identityManager.getUserName(), to: contact.userName }));
+			unsubscribers.push(unsubscriber);
+
+			unsubscriber = wsRef.current.subscribe("join", async (_data) => {
+				const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
+				const signature = await signChallenge(await importECDSAPrivateKey(identityManager.getPrivateKey()), rawPubKey);
+				wsRef.current.send({
+					type: "challenge1",
+					publicKey: arrayBufferToBase64(rawPubKey),
+					signature: arrayBufferToBase64(signature),
+					from: identityManager.getUserName(),
+					to: contact.userName,
+				});
+			});
+
+			unsubscribers.push(unsubscriber);
+
+			unsubscriber = wsRef.current.subscribe("challenge1", async (data) => {
+				const rawECDH = base64ToArrayBuffer(data.publicKey);
+				const signature = base64ToArrayBuffer(data.signature);
+				let contactPublicKey = await importECDSAPublicKey(contact.publicKey);
+				if (typeof contactPublicKey === "string") contactPublicKey = await importECDSAPublicKey(contactPublicKey);
+
+				const valid = await verifyChallenge(contactPublicKey, rawECDH, signature);
+				if (valid) {
+					const rawPubKey = await crypto.subtle.exportKey("raw", ECDHKeyPair.current.publicKey);
+					const sig = await signChallenge(await importECDSAPrivateKey(identityManager.getPrivateKey()), rawPubKey);
+					wsRef.current.send({
+						type: "challenge2",
+						publicKey: arrayBufferToBase64(rawPubKey),
+						signature: arrayBufferToBase64(sig),
+						from: identityManager.getUserName(),
+						to: contact.userName,
+					});
+
+					const publicKey = await crypto.subtle.importKey("raw", rawECDH, { name: "ECDH", namedCurve: "P-256" }, true, []);
+					const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
+					AESKey.current = await importAESKey(sharedSecret);
+
+					if (pendingIceCandidates.current.length > 0) {
+						for (const candidate of pendingIceCandidates.current) await sendCandidate(candidate);
+						pendingIceCandidates.current = [];
+					}
+				} else {
+					console.error("Unverified signature in challenge1");
 				}
-			};
+			});
 
-			ws.onmessage = (msg) => handleSignalingMessage(msg.data);
-			ws.onerror = (e) => console.error("WebSocket error", e);
+			unsubscribers.push(unsubscriber);
+
+			unsubscriber = wsRef.current.subscribe("challenge2", async (data) => {
+				const rawECDH = base64ToArrayBuffer(data.publicKey);
+				const signature = base64ToArrayBuffer(data.signature);
+				let contactPublicKey = contact.publicKey;
+				if (typeof contactPublicKey === "string") {
+					try { contactPublicKey = await importECDSAPublicKey(contactPublicKey); }
+					catch (e) { console.error("Failed to import public key:", e); return; }
+				} else if (!contactPublicKey) return;
+
+				const valid = await verifyChallenge(contactPublicKey, rawECDH, signature);
+				if (valid) {
+					const publicKey = await crypto.subtle.importKey("raw", rawECDH, { name: "ECDH", namedCurve: "P-256" }, true, []);
+					const sharedSecret = await deriveSharedSecret(ECDHKeyPair.current.privateKey, publicKey);
+					AESKey.current = await importAESKey(sharedSecret);
+
+					if (pendingIceCandidates.current.length > 0) {
+						for (const candidate of pendingIceCandidates.current) await sendCandidate(candidate);
+						pendingIceCandidates.current = [];
+					}
+
+					const offer = await pc.createOffer();
+					await pc.setLocalDescription(offer);
+
+					const encoder = new TextEncoder();
+					const sdpBuffer = encoder.encode(offer.sdp);
+					const { iv, encrypted } = await encryptAES(sdpBuffer, AESKey.current);
+					wsRef.current.send({
+						type: "offer",
+						offer: arrayBufferToBase64(encrypted),
+						iv: arrayBufferToBase64(iv),
+						from: identityManager.getUserName(),
+						to: contact.userName,
+					});
+				} else {
+					console.error("Unverified signature in challenge2");
+				}
+			});
+
+			unsubscribers.push(unsubscriber);
+
+			unsubscriber = wsRef.current.subscribe("offer", async (data) => {
+				const iv = base64ToArrayBuffer(data.iv);
+				const encryptedSDPBuffer = base64ToArrayBuffer(data.offer);
+				const SDPBuffer = await decryptAES(encryptedSDPBuffer, AESKey.current, iv);
+				const sdp = new TextDecoder().decode(SDPBuffer);
+				await pc.setRemoteDescription({ type: "offer", sdp });
+
+				for (const c of pendingCandidates.current) {
+					try { await pc.addIceCandidate(c); } catch (e) { console.error("ICE candidate error", e); }
+				}
+				pendingCandidates.current = [];
+
+				const answer = await pc.createAnswer();
+				await pc.setLocalDescription(answer);
+				const ansSdpBuffer = new TextEncoder().encode(answer.sdp);
+				const { iv: ansiv, encrypted: encAns } = await encryptAES(ansSdpBuffer, AESKey.current);
+				wsRef.current.send({
+					type: "answer",
+					answer: arrayBufferToBase64(encAns),
+					iv: arrayBufferToBase64(ansiv),
+					from: identityManager.getUserName(),
+					to: contact.userName,
+				});
+			});
+
+			unsubscribers.push(unsubscriber);
+
+			unsubscriber = wsRef.current.subscribe("answer", async (data) => {
+				const iv = base64ToArrayBuffer(data.iv);
+				const encryptedSDPBuffer = base64ToArrayBuffer(data.answer);
+				const SDPBuffer = await decryptAES(encryptedSDPBuffer, AESKey.current, iv);
+				const sdp = new TextDecoder().decode(SDPBuffer);
+				await pc.setRemoteDescription({ type: "answer", sdp });
+
+				for (const c of pendingCandidates.current) {
+					try { await pc.addIceCandidate(c); } catch (e) { console.error("ICE candidate error", e); }
+				}
+				pendingCandidates.current = [];
+				setIsCalling(false);
+				setCallAnswered(true);
+			});
+
+			unsubscribers.push(unsubscriber);
+
+			unsubscriber = wsRef.current.subscribe("ice", async (data) => {
+				const iv = base64ToArrayBuffer(data.iv);
+				const encryptedCandidateBuffer = base64ToArrayBuffer(data.candidate);
+				const candidateBuffer = await decryptAES(encryptedCandidateBuffer, AESKey.current, iv);
+				const candidate = new RTCIceCandidate(JSON.parse(new TextDecoder().decode(candidateBuffer)));
+
+				if (!pc.currentRemoteDescription) {
+					pendingCandidates.current.push(candidate);
+				} else {
+					try { await pc.addIceCandidate(candidate); }
+					catch (e) { console.error("ICE candidate error", e); }
+				}
+			});
+
+			unsubscribers.push(unsubscriber);
+
+			unsubscriber = wsRef.current.subscribe("end-call", async (_data) => {
+				console.log("Remote user ended call");
+				setShowEndCallNotification(true);
+				setTimeout(() => {
+					endCallAndNavigate();
+				}, 2500);
+			});
+
+			unsubscribers.push(unsubscriber);
+
+			if (callInitiatedFromHome) {
+				setIsCalling(true);
+				console.log("Yup calll initiated");
+				console.log(`calll initiated ${callInitiatedFromHome}`);
+				wsRef.current.send({ type: "call-request", from: identityManager.getUserName(), to: contact.userName });
+				callTimeoutRef.current = setTimeout(() => {
+					if (!callAnswered) {
+						wsRef.current.send({ type: "call-cancelled", from: identityManager.getUserName(), to: contact.userName });
+						endCallAndNavigate();
+					}
+				}, 30000);
+			}
+
+			if (incomingCallAccepted) {
+				setCallAnswered(true);
+				wsRef.current.send({ type: "call-accepted", from: identityManager.getUserName(), to: contact.userName });
+			}
 		};
 
 		init();
@@ -429,16 +459,18 @@ export default function CallPage() {
 		return () => {
 			active = false;
 			cleanupMedia();
+			unsubscribers.forEach((unsubscriber) => { unsubscriber() });
 		};
 
-	}, [signalingServer, identityManager, contact, callInitiatedFromHome, incomingCallAccepted]);
+	}, []);
+
+	if (!identityManager) return;
 
 	const cancelCalling = () => {
-		if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-			wsRef.current.send(JSON.stringify({ type: "call-cancelled", from: identityManager.getUserName(), to: contact.userName }));
+		if (wsRef.current && wsRef.current.ws.readyState === WebSocket.OPEN) {
+			wsRef.current.send({ type: "call-cancelled", from: identityManager.getUserName(), to: contact.userName });
 		}
-		cleanupMedia();
-		navigate("/");
+		endCallAndNavigate();
 	};
 
 	// ---- Resolution change ----
@@ -482,7 +514,7 @@ export default function CallPage() {
 		if (track) { track.enabled = !track.enabled; setIsAudioOn(track.enabled); }
 	};
 
-	// ---- Shared sub-components ----
+
 	const StatsPanel = ({ compact = false }) => (
 		<div className={`bg-black/80 backdrop-blur rounded-lg text-green-300 font-mono ${compact ? "text-xs p-2 grid grid-cols-2 gap-x-3 gap-y-0.5" : "text-xs p-3 space-y-0.5"}`}>
 			<div>⬇ {liveStats.downloadBitrate} kBps</div>
@@ -541,10 +573,9 @@ export default function CallPage() {
 
 
 	return (
-		// Full-screen black container, everything absolutely positioned inside
 		<div className="fixed inset-0 bg-black text-white overflow-hidden" onClick={showControls}>
 
-			{/* ── REMOTE VIDEO (always full screen behind everything) ── */}
+
 			<video
 				ref={remoteVideoRef}
 				autoPlay
@@ -579,7 +610,6 @@ export default function CallPage() {
 				</div>
 			</div>
 
-			{/* ── STATS TOGGLE BUTTON (top-left) ── */}
 			<button
 				onClick={(e) => { e.stopPropagation(); setShowStats(s => !s); showControls(); }}
 				className={`absolute top-3 left-3 z-20 px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${showStats ? "bg-green-700 text-white" : "bg-black/60 text-green-400 hover:bg-black/80"}`}
@@ -595,13 +625,13 @@ export default function CallPage() {
 			)}
 
 			{/* ── ERROR ── */}
-			{error && (
+			{showError && error && (
 				<div className="absolute top-14 left-3 z-20 bg-red-700/90 text-white px-4 py-2 rounded-lg text-sm shadow-lg max-w-xs">
 					{error}
 				</div>
 			)}
 
-			{/* ── SETTINGS PANEL (floating above controls) ── */}
+			{/* ── SETTINGS PANEL ── */}
 			{showSettings && (
 				<div
 					className="absolute bottom-24 left-1/2 -translate-x-1/2 z-30"
@@ -612,7 +642,7 @@ export default function CallPage() {
 			)}
 
 			{/* ── BOTTOM CONTROLS BAR ── */}
-			{/* On mobile: auto-hides after 4s of inactivity. On desktop: always visible. */}
+
 			<div
 				className={`
 					absolute bottom-0 left-0 right-0 z-20
@@ -662,7 +692,7 @@ export default function CallPage() {
 				</button>
 			</div>
 
-			{/* ── TAP TO SHOW CONTROLS hint (mobile only, when controls hidden) ── */}
+
 			{!controlsVisible && (
 				<div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 md:hidden">
 					<p className="text-white/30 text-xs">Tap to show controls</p>

@@ -7,6 +7,7 @@ import { useUser } from "../utils/UserContext";
 export default function Navbar({ onHomeClick, onProfileClick, onContactClick, onServerClick}) {
   const {identityManager} = useUser();
   const location = useLocation()
+	if (!identityManager) return null;
   return (
     <nav className="w-full bg-white shadow px-4 py-3 sm:px-6 sm:py-4 flex items-center justify-between">
       <div className="flex gap-x-8">

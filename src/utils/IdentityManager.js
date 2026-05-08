@@ -1,54 +1,98 @@
+import { exportECDSAPrivateKey, exportECDSAPublicKey, importECDSAPrivateKey, importECDSAPublicKey } from "./crypto";
+
 export class IdentityManager {
+
 	constructor(dbName = "UserDataDB") {
 		this.dbName = dbName;
 	}
 
-	// ---------------- IndexedDB helpers ----------------
+	// ================= DB HELPERS =================
+
 	async _openDB() {
+
 		return new Promise((resolve, reject) => {
-			const request = indexedDB.open(this.dbName, 1);
+
+			const request =
+				indexedDB.open(this.dbName, 1);
+
 			request.onupgradeneeded = (e) => {
+
 				const db = e.target.result;
-				if (!db.objectStoreNames.contains("userData")) db.createObjectStore("userDataecureData");
+				if (!db.objectStoreNames.contains("userData")) db.createObjectStore("userData");
 			};
-			request.onsuccess = () => resolve(request.result);
-			request.onerror = () => reject(request.error);
+
+			request.onsuccess = () =>
+				resolve(request.result);
+
+			request.onerror = () =>
+				reject(request.error);
 		});
 	}
 
 	async _storeObject(storeName, key, value) {
+
 		const db = await this._openDB();
+
 		return new Promise((resolve, reject) => {
-			const tx = db.transaction(storeName, "readwrite");
-			tx.objectStore(storeName).put(value, key);
+
+			const tx =
+				db.transaction(storeName, "readwrite");
+
+			tx.objectStore(storeName)
+				.put(value, key);
+
 			tx.oncomplete = () => resolve();
-			tx.onerror = () => reject(tx.error);
+
+			tx.onerror = () =>
+				reject(tx.error);
 		});
 	}
 
 	async _getObject(storeName, key) {
+
 		const db = await this._openDB();
+
 		return new Promise((resolve, reject) => {
-			const tx = db.transaction(storeName, "readonly");
-			const request = tx.objectStore(storeName).get(key);
-			request.onsuccess = () => resolve(request.result || null);
-			request.onerror = () => reject(request.error);
+
+			const tx =
+				db.transaction(storeName, "readonly");
+
+			const request =
+				tx.objectStore(storeName).get(key);
+
+			request.onsuccess = () =>
+				resolve(request.result || null);
+
+			request.onerror = () =>
+				reject(request.error);
 		});
 	}
 
-	// ---------------- Key derivation ----------------
+	// ================= KEY DERIVATION =================
+
 	async _deriveAESKey(password, salt) {
-		const pwKey = await crypto.subtle.importKey(
-			"raw",
-			new TextEncoder().encode(password),
-			{ name: "PBKDF2" },
-			false,
-			["deriveKey"]
-		);
+
+		const pwKey =
+			await crypto.subtle.importKey(
+				"raw",
+				new TextEncoder().encode(password),
+				{ name: "PBKDF2" },
+				false,
+				["deriveKey"]
+			);
+
 		return crypto.subtle.deriveKey(
-			{ name: "PBKDF2", salt, iterations: 200_000, hash: "SHA-256" },
+			{
+				name: "PBKDF2",
+				salt,
+				iterations: 200000,
+				hash: "SHA-256"
+			},
 			pwKey,
-			{ name: "AES-GCM", length: 256 },
+			{
+				name: "AES-GCM",
+				length: 256
+			},
 			true,
 			["encrypt", "decrypt"]
 		);
@@ -124,7 +168,8 @@ export class IdentityManager {
 
 		this.userData = {
 			userName,
-			keyPair: keyPair,
+			publicKey: await exportECDSAPublicKey(keyPair.publicKey),
+			privateKey: await exportECDSAPrivateKey(keyPair.privateKey),
 			contacts: [],
 			stunServers: [],
 			turnServers: [],
@@ -132,9 +177,7 @@ export class IdentityManager {
 		};
 		this.password = password;
 
-		const encryptedData = await this.encryptWithPassphrase(this.userData, password);
-
-		await this._storeObject("userData", userName, encryptedData);
+		await this.storeEncryptedUserData();
 
 		console.log("User created");
 	}
@@ -157,7 +200,7 @@ export class IdentityManager {
 	}
 
 
-	// ============ CONTACT MANAGEMENT ============
+	// ================= CONTACT MANAGEMENT =================
 
 	// Add a contact for the given user
 	async addContact(contact) {
@@ -167,7 +210,7 @@ export class IdentityManager {
 	}
 
 	// Get contacts for a given user
-	async getContacts() {
+	getContacts() {
 		return this.userData.contacts;
 	}
 
@@ -194,7 +237,7 @@ export class IdentityManager {
 		return this.userData.contacts[contactIndex];
 	}
 
-	async addContactSignalingServer(contactUserName, serverURL) {
+	async addContactSignallingServer(contactUserName, serverURL) {
 		const contact = this.userData.contacts.find(c => c.userName === contactUserName);
 		if (!contact) throw new Error("Contact not found");
 
@@ -203,7 +246,7 @@ export class IdentityManager {
 		await this.storeEncryptedUserData();
 	}
 
-	async removeContactSignalingServer(contactUserName, serverURL) {
+	async removeContactSignallingServer(contactUserName, serverURL) {
 		const contact = this.userData.contacts.find(c => c.userName === contactUserName);
 		if (!contact) throw new Error("Contact not found");
 
@@ -215,16 +258,18 @@ export class IdentityManager {
 	}
 
 	// Get signaling server for a specific contact
-	async getContactSignalingServer(contactUserName) {
+	async getContactSignallingServers(contactUserName) {
 		const contact = this.userData.contacts.find(c => c.userName === contactUserName);
-		if (!contact) throw new Error("Contact not found");
 
-		return contact.signalingServerURL || null;
+		if (!contact)
+			throw new Error("Contact not found");
+
+		return contact.signallingServers;
 	}
 
 	// ============ USERNAME MANAGEMENT ============
 
-	async getUserName() {
+	getUserName() {
 		return this.userData.userName;
 	}
 
@@ -240,33 +285,35 @@ export class IdentityManager {
 
 		await this.storeEncryptedUserData();
 
-
 		await new Promise((resolve, reject) => {
+
 			tx.oncomplete = resolve;
-			tx.onerror = () => reject(tx.error);
+
+			tx.onerror = () =>
+				reject(tx.error);
 		});
 	}
 
 
 	// Key management
-	async getPublicKey(){
-		return this.userData.keyPair.publicKey;
+	getPublicKey() {
+		return this.userData.publicKey;
 	}
 
-	async getPrivateKey(){
-		return this.userData.keyPair.privateKey;
+	getPrivateKey() {
+		return this.userData.privateKey;
 	}
 
-	// ============ STUN SERVER MANAGEMENT ============
+	// ================= STUN SERVERS =================
 
 	async addStunServer(stunUrl) {
 		if (!this.userData.stunServers.includes(stunUrl)) {
-			record.stunServers.push(stunUrl);
+			this.userData.stunServers.push(stunUrl);
 			await this.storeEncryptedUserData();
 		}
 	}
 
-	async getStunServers() {
+	getStunServers() {
 		return this.userData.stunServers;
 	}
 
@@ -282,12 +329,12 @@ export class IdentityManager {
 
 	async addTurnServer(turnServer) {
 		if (!this.userData.turnServers.includes(turnServer)) {
-			record.turnServers.push(turnServer);
+			this.userData.turnServers.push(turnServer);
 			await this.storeEncryptedUserData();
 		}
 	}
 
-	async getTurnServers() {
+	getTurnServers() {
 		return this.userData.turnServers;
 	}
 
@@ -300,7 +347,7 @@ export class IdentityManager {
 		await this.storeEncryptedUserData();
 	}
 
-	// ============ SIGNALLING SERVER MANAGEMENT ============
+	// ================= SIGNALLING SERVERS =================
 
 	async addSignallingServer(url, own = false) {
 
@@ -309,14 +356,14 @@ export class IdentityManager {
 		if (!exists) {
 			this.userData.signallingServers.push({
 				url,
-				token: null, 
+				token: null,
 				own,
 			});
 			await this.storeEncryptedUserData();
 		}
 	}
 
-	async setOwnerShipForSignallingServer(url, own = false){
+	async setOwnerShipForSignallingServer(url, own = false) {
 		const server = this.userData.signallingServers.find((server) => server.url === url);
 
 		if (server) {
@@ -325,7 +372,7 @@ export class IdentityManager {
 		}
 	}
 
-	async getSignallingServers() {
+	getSignallingServers() {
 		return this.userData.signallingServers;
 	}
 
@@ -336,13 +383,13 @@ export class IdentityManager {
 	}
 
 	// Set active signaling server for user
-	async setActiveSignallingServer(url) {
-		this.userData.activeSignallingServer = url;
-		await this.storeEncryptedUserData();
-	}
+	//async setActiveSignallingServer(url) {
+	//	this.userData.activeSignallingServer = url;
+	//	await this.storeEncryptedUserData();
+	//}
 
-	// Get active signaling server for user
-	async getActiveSignallingServer() {
-		return this.userData.activeSignallingServer;
-	}
+	//// Get active signaling server for user
+	//getActiveSignallingServer() {
+	//	return this.userData.activeSignallingServer;
+	//}
 }

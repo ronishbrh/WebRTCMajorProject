@@ -13,7 +13,7 @@ export default function Login({ onUnlocked }) {
 
 		try {
 			const identityManager = new IdentityManager();
-			await identityManager.unlockUser(userName, password);
+			await identityManager.unlockUser(userName, userName);
 
 			onUnlocked(identityManager);
 		} catch (err) {
@@ -28,8 +28,8 @@ export default function Login({ onUnlocked }) {
 		try {
 			const identityManager = new IdentityManager();
 			await identityManager.createUser(userName, password);
-
-			if (!identity.contacts) identity.contacts = [];
+			//await identityManager.addSignallingServer("wss://webrtc-signaling-server-up3e.onrender.com");
+			await identityManager.addSignallingServer("wss://localhost:8080");
 
 			onUnlocked(identityManager);
 		} catch (err) {

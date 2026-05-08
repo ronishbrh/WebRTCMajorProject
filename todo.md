@@ -1,12 +1,12 @@
 # Sorting according to importance
-- [ ] Contact share garda afule registered signalling servers ko list pani share garne. Arko le chahi ti sab servers lai add garne. hence, a list of signalling server url is associated with a contact
-- [ ] Able to use proper signalling server for calling a user.
-- [ ] Listen for calls from all signalling server.
+- [x] Contact share garda afule registered signalling servers ko list pani share garne. Arko le chahi ti sab servers lai add garne. hence, a list of signalling server url is associated with a contact
+- [x] Able to use proper signalling server for calling a user.
+- [x] Listen for calls from all signalling server.
 - [ ] When relogging the key of the user is changed sometime. Happened on my phone.
 - [ ] Implement authentication and security between signaling server and the clients.
-- [ ] Check combination between ISPs. Contact them if needed.
+- [x] Check combination between ISPs. Contact them if needed.
 - [ ] able to import/export account
-- [ ] Put the hardcoded signaling server for the client in the signaling server list.
+- [x] Put the hardcoded signaling server for the client in the signaling server list.
 - [ ] Handle renegotiation, retry call
 - [ ] Improve UI for mobile screens.
 - [ ] User lai public key le chinne. even in server. Maile kasaiko key aru bata liye vane usko name ma afno marji le rakhna sakxu(e.g. vai, uncle). server ma name check garnu thik xaina. public key le nai user lai uniqely identify garne.

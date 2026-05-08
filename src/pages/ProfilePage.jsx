@@ -14,7 +14,6 @@ export default function ProfilePage() {
   const navigate = useNavigate();
   const { identityManager } = useUser();
 
-  const [name, setName] = useState(identityManager.getUserName());
   const [pubKey, setPubKey] = useState("");
   const [showQR, setShowQR] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -85,13 +84,15 @@ export default function ProfilePage() {
     }
 
     const loadKey = async () => {
-      const keyText = await exportECDSAPublicKey(identityManager.getPublicKey());
+      const keyText = identityManager.getPublicKey();
       setPubKey(keyText);
     };
 
     loadKey();
   }, [identityManager, navigate]);
 
+	if(!identityManager) return;
+  const [name, setName] = useState(identityManager.getUserName());
 
   return (
     <div className="w-full min-h-screen flex flex-col bg-gray-50">
