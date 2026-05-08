@@ -7,7 +7,19 @@ import LoginPage from "./pages/LoginPage";
 import ServerPage from "./pages/ServerPage";
 import { useNavigate } from "react-router-dom";
 import { useUser } from "./utils/UserContext";
+import AdminPanel from "./pages/AdminPanel";
+import { useEffect } from "react";
 
+
+export function Debug() {
+  const { identity } = useUser();
+
+  useEffect(() => {
+    console.log("GLOBAL identity:", identity);
+  }, [identity]);
+
+  return null;
+}
 
 export default function App() {
 	const navigate = useNavigate();
@@ -34,6 +46,12 @@ export default function App() {
 				
 				<Route path="/profile" element={<ProfilePage />} />
 				<Route path="/server" element={<ServerPage />} />
+
+				<Route path="/admin" element={<AdminPanel />} />
+
+
+			
+			
 			</Routes>
 		</div>
 	);

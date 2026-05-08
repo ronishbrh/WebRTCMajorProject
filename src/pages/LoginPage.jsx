@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { IdentityManager } from "../utils/IdentityManager";
+import { useUser } from "../utils/UserContext";
 
 const identityManager = new IdentityManager();
 
@@ -9,6 +10,7 @@ export default function Login({ onUnlocked }) {
     const [error, setError] = useState("");
     const [mode, setMode] = useState("login"); // "login" or "signup"
 
+    const { setIdentity } = useUser()
     const handleLogin = async () => {
         setError("");
 
@@ -19,6 +21,8 @@ export default function Login({ onUnlocked }) {
             if (!identity.privateKey) {
                 throw new Error("Private key missing for user. Cannot sign messages.");
             }
+            setIdentity(identity)
+
 
             onUnlocked(identity);
         } catch (err) {
@@ -52,6 +56,9 @@ export default function Login({ onUnlocked }) {
             //     publicKey: identity.publicKey,
             //     signalingServerURL: "",
             // });
+
+
+            setIdentity(identity)
 
             onUnlocked(identity);
         } catch (err) {

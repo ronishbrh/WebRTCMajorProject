@@ -45,7 +45,7 @@ const HOSTING_STEPS = [
     },
 ];
 
-// ── Code block component ───────────────────────────────────
+// ── Code block ─────────────────────────────────────────────
 function CodeBlock({ code }) {
     const [copied, setCopied] = useState(false);
 
@@ -72,14 +72,13 @@ function CodeBlock({ code }) {
     );
 }
 
-// ── Self-hosting guide panel ───────────────────────────────
+// ── Self-hosting guide ─────────────────────────────────────
 function SelfHostingGuide() {
     const [open, setOpen] = useState(false);
     const [expandedStep, setExpandedStep] = useState(null);
 
     return (
         <div className="border border-indigo-200 rounded-lg overflow-hidden">
-            {/* Header toggle */}
             <button
                 onClick={() => setOpen(o => !o)}
                 className="w-full flex items-center justify-between px-4 py-3 bg-indigo-50 hover:bg-indigo-100 transition text-left"
@@ -99,7 +98,6 @@ function SelfHostingGuide() {
                         The server code is open source — follow the steps below to get it running in minutes.
                     </p>
 
-                    {/* GitHub link */}
                     <a
                         href="https://github.com/ronishbrh/webrtc-signaling-server"
                         target="_blank"
@@ -110,7 +108,6 @@ function SelfHostingGuide() {
                         View signaling server source code on GitHub
                     </a>
 
-                    {/* Steps */}
                     <div className="space-y-2 mt-2">
                         {HOSTING_STEPS.map((s) => (
                             <div key={s.step} className="border border-gray-200 rounded-lg overflow-hidden">
@@ -139,7 +136,6 @@ function SelfHostingGuide() {
                         ))}
                     </div>
 
-                    {/* Quick requirement checklist */}
                     <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
                         <p className="text-xs font-semibold text-amber-800 mb-1">Requirements</p>
                         <ul className="text-xs text-amber-700 space-y-0.5 list-disc list-inside">
@@ -155,10 +151,61 @@ function SelfHostingGuide() {
     );
 }
 
+// ── Helpers ────────────────────────────────────────────────
+
+function toHttp(url) {
+    if (!url) return "";
+    if (url.startsWith("wss://")) return url.replace("wss://", "https://");
+    if (url.startsWith("ws://")) return url.replace("ws://", "http://");
+    return url;
+}
+
+async function exportPublicKeyBase64(publicKey) {
+    const spki = await crypto.subtle.exportKey("spki", publicKey);
+    return btoa(String.fromCharCode(...new Uint8Array(spki)));
+}
+
+// Full challenge/verify — returns JWT string or null if not yet approved
+async function authenticateWithServer(httpUrl, publicKey, privateKey) {
+    const pubKeyBase64 = await exportPublicKeyBase64(publicKey);
+
+    // 1. Get nonce
+    const challengeRes = await fetch(`${httpUrl}/auth/challenge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicKey: pubKeyBase64 }),
+    });
+    if (!challengeRes.ok) throw new Error("Challenge request failed");
+    const { nonce } = await challengeRes.json();
+
+    // 2. Sign nonce with ECDSA private key
+    const signature = await crypto.subtle.sign(
+        { name: "ECDSA", hash: { name: "SHA-256" } },
+        privateKey,
+        new TextEncoder().encode(nonce)
+    );
+    const signatureBase64 = btoa(String.fromCharCode(...new Uint8Array(signature)));
+
+    // 3. Verify → JWT
+    const verifyRes = await fetch(`${httpUrl}/auth/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicKey: pubKeyBase64, signature: signatureBase64 }),
+    });
+
+    if (!verifyRes.ok) {
+        const text = await verifyRes.text();
+        if (text === "not approved") return null; // Normal — not yet approved
+        throw new Error(`Verify failed: ${text}`);
+    }
+
+    const { token } = await verifyRes.json();
+    return token;
+}
 
 // ── Main component ─────────────────────────────────────────
 export default function SignalingServerSection() {
-    const { identity } = useUser();
+    const { identity, setIdentity } = useUser();
     const [servers, setServers] = useState([]);
     const [activeServer, setActiveServer] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -167,6 +214,137 @@ export default function SignalingServerSection() {
     const [addingServer, setAddingServer] = useState(false);
     const [testingServers, setTestingServers] = useState({});
 
+    // Per-server access status map: { [serverUrl]: "approved" | "pending" | "unknown" }
+    const [accessStatusMap, setAccessStatusMap] = useState({});
+
+    // Check /auth/status for one server using its stored token
+    const checkAccessStatus = async (serverURL) => {
+        const serverKey = serverURL.replace("wss://", "https://");
+        const token = localStorage.getItem(`token_${serverKey}`);
+
+
+        if (!token) {
+            setAccessStatusMap(prev => ({ ...prev, [serverURL]: "unknown" }));
+            return;
+        }
+
+        try {
+            const res = await fetch(`${toHttp(serverURL)}/auth/status`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+
+            if (!res.ok) {
+                setAccessStatusMap(prev => ({ ...prev, [serverURL]: "unknown" }));
+                return;
+            }
+
+            const data = await res.json();
+            setAccessStatusMap(prev => ({
+                ...prev,
+                [serverURL]: data.approved ? "approved" : "pending"
+            }));
+        } catch {
+            setAccessStatusMap(prev => ({ ...prev, [serverURL]: "unknown" }));
+        }
+    };
+
+    // Request access: register → then immediately try challenge/verify
+    const requestAccess = async (serverURL) => {
+        try {
+            const httpURL = toHttp(serverURL);
+            const pubKeyBase64 = await exportPublicKeyBase64(identity.publicKey);
+
+            // Step 1: Send public key to admin queue
+            const res = await fetch(`${httpURL}/register`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    publicKey: pubKeyBase64,
+                    message: `Requesting access to server: ${serverURL}`
+                })
+            });
+            if (!res.ok) throw new Error("Registration failed");
+
+            // Step 2: Try to get a token immediately (succeeds if already approved)
+            const token = await authenticateWithServer(
+                httpURL,
+                identity.publicKey,
+                identity.privateKey
+            );
+
+            if (token) {
+                // Already approved — store token and mark approved
+                localStorage.setItem(`token_${serverURL}`, token);
+                setAccessStatusMap(prev => ({ ...prev, [serverURL]: "approved" }));
+                // Store token in localStorage only (not mixed into identity)
+                alert("✅ Access granted!");
+            } else {
+                // Not yet approved — mark pending, polling will catch approval
+                setAccessStatusMap(prev => ({ ...prev, [serverURL]: "pending" }));
+                alert("Request sent! Waiting for admin approval.");
+            }
+
+        } catch (err) {
+            console.error(err);
+            alert("Failed to send request: " + err.message);
+        }
+    };
+
+    // ── Polling effect ─────────────────────────────────────
+    // FIX: accessStatusMap added to dependency array so the closure always
+    // reads the latest status, preventing stale-closure bugs where a
+    // "pending" server is never rechecked after the map updates.
+    useEffect(() => {
+        if (!identity?.userName || servers.length === 0) return;
+
+        const poll = async () => {
+            for (const server of servers) {
+                const currentStatus = accessStatusMap[server.url];
+
+                if (currentStatus === "approved") {
+                    // Token already stored — just verify it's still valid
+                    await checkAccessStatus(server.url);
+                } else {
+                    // "pending", "unknown", or undefined — try to authenticate.
+                    // This will return a token once the admin approves the request.
+                    try {
+                        const token = await authenticateWithServer(
+                            toHttp(server.url),
+                            identity.publicKey,
+                            identity.privateKey
+                        );
+
+                        if (token) {
+                            // Admin just approved — store token and flip status
+                            localStorage.setItem(`token_${server.url}`, token);
+                            setAccessStatusMap(prev => ({
+                                ...prev,
+                                [server.url]: "approved"
+                            }));
+                        } else if (!accessStatusMap[server.url]) {
+                            // authenticateWithServer returned null (not yet approved)
+                            // and we have no prior status — mark as pending so UI reflects it
+                            setAccessStatusMap(prev => ({
+                                ...prev,
+                                [server.url]: "pending"
+                            }));
+                        }
+                        // If already "pending" and still null, leave it as-is
+                    } catch {
+                        // Server unreachable or challenge failed — don't change status
+                    }
+                }
+            }
+        };
+
+        poll(); // Run immediately on mount / dependency change
+        const interval = setInterval(poll, 5000);
+        return () => clearInterval(interval);
+
+        // accessStatusMap included so closure always has fresh status values
+    }, [identity?.userName, servers, accessStatusMap]);
+
+    // Load servers from IndexedDB
     useEffect(() => {
         if (!identity?.userName) { setLoading(false); return; }
 
@@ -175,39 +353,38 @@ export default function SignalingServerSection() {
                 setLoading(true);
 
                 const record = await identityManager._getObject("keys", identity.userName);
-
                 const contacts = record.contacts || [];
                 const userServers = record.signalingServers || [];
 
                 const serverMap = new Map();
 
                 userServers.forEach(s => {
-                    serverMap.set(s.url, {
-                        url: s.url,
-                        owners: [s.owner || "You"],
-                        status: 'checking'
-                    });
+                    const url = typeof s === "string" ? s : s?.url;
+                    if (!url) return;
+                    const cleanUrl = url.trim();
+                    if (!serverMap.has(cleanUrl)) {
+                        serverMap.set(cleanUrl, { url: cleanUrl, owners: ["You"] });
+                    } else {
+                        serverMap.get(cleanUrl).owners.push("You");
+                    }
                 });
 
-
                 contacts.forEach(contact => {
-                    (contact.signalingServers || []).forEach(url => {
-
-                        if (!serverMap.has(url)) {
-                            serverMap.set(url, {
-                                url,
-                                owners: [contact.userName],
-                                status: 'checking'
-                            });
+                    const list = contact.signalingServers || contact.s || [];
+                    list.forEach(s => {
+                        const url = typeof s === "string" ? s : s?.url;
+                        if (!url) return;
+                        const cleanUrl = url.trim();
+                        if (!serverMap.has(cleanUrl)) {
+                            serverMap.set(cleanUrl, { url: cleanUrl, owners: [contact.userName || "Unknown"] });
                         } else {
-                            serverMap.get(url).owners.push(contact.userName);
+                            serverMap.get(cleanUrl).owners.push(contact.userName || "Unknown");
                         }
                     });
                 });
 
                 setServers(Array.from(serverMap.values()));
                 setError(null);
-
             } catch (err) {
                 console.error(err);
                 setError(err.message);
@@ -220,6 +397,7 @@ export default function SignalingServerSection() {
         loadServers();
     }, [identity?.userName]);
 
+    // Test WebSocket connectivity
     const testServer = async (serverURL) => {
         setTestingServers(prev => ({ ...prev, [serverURL]: 'checking' }));
         const timeout = setTimeout(() => {
@@ -227,23 +405,39 @@ export default function SignalingServerSection() {
         }, 3000);
         try {
             const ws = new WebSocket(serverURL);
-            ws.onopen = () => { clearTimeout(timeout); ws.close(); setTestingServers(prev => ({ ...prev, [serverURL]: 'online' })); };
-            ws.onerror = () => { clearTimeout(timeout); setTestingServers(prev => ({ ...prev, [serverURL]: 'offline' })); };
-        } catch { clearTimeout(timeout); setTestingServers(prev => ({ ...prev, [serverURL]: 'offline' })); }
+            ws.onopen = () => {
+                clearTimeout(timeout);
+                ws.close();
+                setTestingServers(prev => ({ ...prev, [serverURL]: 'online' }));
+            };
+            ws.onerror = () => {
+                clearTimeout(timeout);
+                setTestingServers(prev => ({ ...prev, [serverURL]: 'offline' }));
+            };
+        } catch {
+            clearTimeout(timeout);
+            setTestingServers(prev => ({ ...prev, [serverURL]: 'offline' }));
+        }
     };
 
     useEffect(() => {
-        servers.forEach(server => { if (!testingServers[server.url]) testServer(server.url); });
+        servers.forEach(server => {
+            if (!testingServers[server.url]) testServer(server.url);
+        });
     }, [servers]);
 
+    // Load active server
     useEffect(() => {
         const loadActive = async () => {
-            if (!identity?.userName) return;
-
-            const active = await identityManager.getActiveSignallingServer(identity.userName);
-            setActiveServer(active);
+            try {
+                if (!identity?.userName) return;
+                const record = await identityManager._getObject("keys", identity.userName);
+                if (!record) return;
+                setActiveServer(record.activeSignallingServer || null);
+            } catch (err) {
+                console.error("Failed loading active server:", err);
+            }
         };
-
         loadActive();
     }, [identity?.userName]);
 
@@ -251,7 +445,10 @@ export default function SignalingServerSection() {
         try {
             await identityManager.setActiveSignallingServer(identity.userName, serverURL);
             setActiveServer(serverURL);
-        } catch (err) { console.error('Failed to set active server:', err); alert('Failed to set active server'); }
+        } catch (err) {
+            console.error('Failed to set active server:', err);
+            alert('Failed to set active server');
+        }
     };
 
     const handleDeleteServer = async (serverURL) => {
@@ -265,61 +462,37 @@ export default function SignalingServerSection() {
             }
             if (activeServer === serverURL) setActiveServer(null);
             setServers(servers.filter(s => s.url !== serverURL));
-        } catch (err) { console.error('Failed to delete server:', err); alert('Failed to delete server'); }
+            localStorage.removeItem(`token_${serverURL}`);
+            setAccessStatusMap(prev => {
+                const copy = { ...prev };
+                delete copy[serverURL];
+                return copy;
+            });
+        } catch (err) {
+            console.error('Failed to delete server:', err);
+            alert('Failed to delete server');
+        }
     };
 
     const handleAddServer = async () => {
-        if (!newServerURL.trim()) {
-            alert('Please enter a valid server URL');
-            return;
-        }
-
-        try {
-            new URL(newServerURL);
-        } catch {
-            alert('Invalid URL format');
-            return;
-        }
+        if (!newServerURL.trim()) { alert('Please enter a valid server URL'); return; }
+        try { new URL(newServerURL); } catch { alert('Invalid URL format'); return; }
+        if (servers.some(s => s.url === newServerURL)) { alert('This server URL already exists'); return; }
 
         try {
             setAddingServer(true);
-
-            if (servers.some(s => s.url === newServerURL)) {
-                alert('This server URL already exists');
-                return;
-            }
-
-            let serverStatus = 'checking';
-
             const ws = new WebSocket(newServerURL);
-
             ws.onopen = async () => {
                 ws.close();
-
-                await identityManager.addSignallingServer(
-                    identity.userName,
-                    newServerURL,
-                    "manual"
-                );
-
-                setServers(prev => [
-                    ...prev,
-                    {
-                        url: newServerURL,
-                        owners: ["You"],
-                        status: "online"
-                    }
-                ]);
-
+                await identityManager.addSignallingServer(identity.userName, newServerURL, "manual");
+                setServers(prev => [...prev, { url: newServerURL, owners: ["You"], status: "online" }]);
                 setNewServerURL('');
                 setAddingServer(false);
             };
-
             ws.onerror = () => {
                 alert("Server is offline or unreachable");
                 setAddingServer(false);
             };
-
         } catch (err) {
             console.error(err);
             alert('Failed to add server');
@@ -328,7 +501,11 @@ export default function SignalingServerSection() {
     };
 
     if (loading) {
-        return <div className="bg-blue-50 border border-blue-200 rounded-lg p-4"><p className="text-blue-800">Loading servers...</p></div>;
+        return (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-blue-800">Loading servers...</p>
+            </div>
+        );
     }
 
     const getStatusColor = (status) => ({ online: '🟢', offline: '🔴' }[status] || '🟡');
@@ -337,7 +514,6 @@ export default function SignalingServerSection() {
     return (
         <div className="space-y-4">
 
-            {/* Active Server Info */}
             {activeServer && (
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                     <h3 className="text-green-900 font-semibold mb-2">Currently Active Server</h3>
@@ -345,7 +521,6 @@ export default function SignalingServerSection() {
                 </div>
             )}
 
-            {/* ── SELF-HOSTING GUIDE ── */}
             <SelfHostingGuide />
 
             {/* Add New Server */}
@@ -381,32 +556,76 @@ export default function SignalingServerSection() {
                         {servers.map((server) => {
                             const status = testingServers[server.url] || server.status;
                             const isActive = activeServer === server.url;
+                            const accessStatus = accessStatusMap[server.url] || "unknown";
+
                             return (
-                                <div key={server.url} className={`p-3 border rounded-lg transition ${isActive ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-300 hover:border-gray-400'}`}>
-                                    <div className="flex items-start justify-between gap-3">
+                                <div
+                                    key={server.url}
+                                    className={`p-3 border rounded-lg transition ${isActive ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-300 hover:border-gray-400'}`}
+                                >
+                                    <div className="flex items-start justify-between gap-3 flex-wrap">
                                         <div className="flex-1 min-w-0">
                                             <p className="text-sm font-mono break-all text-gray-700 mb-1">{server.url}</p>
                                             <div className="flex items-center gap-2 mb-2">
                                                 <span className="text-lg">{getStatusColor(status)}</span>
                                                 <span className="text-xs text-gray-600">{getStatusText(status)}</span>
-                                                {isActive && <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded">Active</span>}
+                                                {isActive && (
+                                                    <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded">Active</span>
+                                                )}
                                             </div>
-                                            {server.owners && server.owners.length > 0 ? (
-                                                <div className="text-xs text-gray-600"><p className="font-medium">Owner:</p><p className="ml-2">{server.owners.join(', ')}</p></div>
+                                            {server.owners?.length > 0 ? (
+                                                <div className="text-xs text-gray-600">
+                                                    <p className="font-medium">Owner:</p>
+                                                    <p className="ml-2">{server.owners.join(', ')}</p>
+                                                </div>
                                             ) : (
                                                 <p className="text-xs text-gray-500 italic">No contacts using this server</p>
                                             )}
                                         </div>
-                                        <div className="flex gap-2 flex-shrink-0">
+
+                                        <div className="flex gap-2 flex-shrink-0 items-start flex-wrap">
                                             {!isActive && (
-                                                <button onClick={() => handleSetActive(server.url)} className="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition" title="Set as active server">
+                                                <button
+                                                    onClick={() => handleSetActive(server.url)}
+                                                    className="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition"
+                                                    title="Set as active server"
+                                                >
                                                     <FiCheck size={16} />
                                                 </button>
                                             )}
-                                            <button onClick={() => handleDeleteServer(server.url)} className="p-2 bg-red-500 hover:bg-red-600 text-white rounded transition" title="Delete server">
+                                            {/* Only show Request Access if not yet approved */}
+                                            {accessStatus !== "approved" && (
+                                                <button
+                                                    onClick={() => requestAccess(server.url)}
+                                                    className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded transition text-xs"
+                                                    title="Request access"
+                                                >
+                                                    {accessStatus === "pending" ? "Re-request Access" : "Request Access"}
+                                                </button>
+                                            )}
+                                            <button
+                                                onClick={() => handleDeleteServer(server.url)}
+                                                className="p-2 bg-red-500 hover:bg-red-600 text-white rounded transition"
+                                                title="Delete server"
+                                            >
                                                 <FiTrash2 size={16} />
                                             </button>
                                         </div>
+                                    </div>
+
+                                    {/* Access status badge */}
+                                    <div className="mt-2 text-sm font-semibold">
+                                        {accessStatus === "approved" && (
+                                            <span className="text-green-600">✅ You have access to this server</span>
+                                        )}
+                                        {accessStatus === "pending" && (
+                                            <span className="text-yellow-600">⏳ Waiting for admin approval...</span>
+                                        )}
+                                        {accessStatus === "unknown" && (
+                                            <span className="text-gray-400 font-normal">
+                                                Click "Request Access" to register with this server
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                             );

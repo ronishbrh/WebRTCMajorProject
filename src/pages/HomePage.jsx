@@ -8,6 +8,27 @@ import { IdentityManager } from "../utils/IdentityManager";
 
 const identityManager = new IdentityManager();
 
+// ── URL helpers ──────────────────────────────────────────────────────────────
+function toWss(url) {
+  if (!url) return url;
+  if (url.startsWith("https://")) return url.replace("https://", "wss://");
+  if (url.startsWith("http://"))  return url.replace("http://",  "ws://");
+  return url;
+}
+
+function toHttp(url) {
+  if (!url) return url;
+  if (url.startsWith("wss://")) return url.replace("wss://", "https://");
+  if (url.startsWith("ws://"))  return url.replace("ws://",  "http://");
+  return url;
+}
+
+// ── Export CryptoKey → base64 string ────────────────────────────────────────
+async function exportPublicKey(cryptoKey) {
+  const spki = await crypto.subtle.exportKey("spki", cryptoKey);
+  return btoa(String.fromCharCode(...new Uint8Array(spki)));
+}
+
 export default function HomePage() {
   const navigate = useNavigate();
   const { identity } = useUser();
@@ -31,7 +52,7 @@ export default function HomePage() {
     }
   }, [selectedServer]);
 
-  /* LOAD SIGNALING SERVER (active server) ---------------- */
+  /* LOAD SIGNALING SERVER -------------------------------------------------- */
   useEffect(() => {
     if (!identity) {
       navigate("/login");
@@ -40,11 +61,7 @@ export default function HomePage() {
 
     const loadServer = async () => {
       const server = await identityManager.getActiveSignallingServer(identity.userName);
-
-      // fallback to Render server if none stored
-      const finalServer =
-        server || "wss://webrtc-signaling-server-up3e.onrender.com";
-
+      const finalServer = toWss(server || "wss://webrtc-signaling-server-up3e.onrender.com");
       console.log("Using active signaling server:", finalServer);
       setSignalingServer(finalServer);
     };
@@ -52,7 +69,7 @@ export default function HomePage() {
     loadServer();
   }, [identity, navigate]);
 
-  /* ---------------- LOAD CONTACTS ---------------- */
+  /* LOAD CONTACTS ---------------------------------------------------------- */
   useEffect(() => {
     if (!identity) return;
 
@@ -66,47 +83,25 @@ export default function HomePage() {
     loadContacts();
   }, [identity]);
 
-  /* ---------------- CHECK SERVER CONNECTIVITY -------- */
+  /* CHECK SERVER CONNECTIVITY ---------------------------------------------- */
   const checkServerConnectivity = async (serverURL) => {
     return new Promise((resolve) => {
-      if (!serverURL) {
-        resolve(false);
-        return;
-      }
-
-      const timeout = setTimeout(() => {
-        console.log(`Server check timeout for ${serverURL}`);
-        resolve(false);  // Server is offline
-      }, 3000);
-
+      if (!serverURL) { resolve(false); return; }
+      const wssURL = toWss(serverURL);
+      const timeout = setTimeout(() => resolve(false), 3000);
       try {
-        const ws = new WebSocket(serverURL);
-
-        ws.onopen = () => {
-          clearTimeout(timeout);
-          console.log(`Server ${serverURL} is ONLINE`);
-          ws.close();
-          resolve(true);  // Server is online
-        };
-
-        ws.onerror = () => {
-          clearTimeout(timeout);
-          console.log(`Server ${serverURL} is OFFLINE`);
-          resolve(false);  // Server is offline
-        };
-
-        ws.onclose = () => {
-          clearTimeout(timeout);
-        };
-      } catch (err) {
+        const ws = new WebSocket(wssURL);
+        ws.onopen  = () => { clearTimeout(timeout); ws.close(); resolve(true); };
+        ws.onerror = () => { clearTimeout(timeout); resolve(false); };
+        ws.onclose = () => { clearTimeout(timeout); };
+      } catch {
         clearTimeout(timeout);
-        console.error(`Error checking server ${serverURL}:`, err);
-        resolve(false);  // Server is offline
+        resolve(false);
       }
     });
   };
 
-  /* ---------------- WEBSOCKET CONNECTION (for incoming calls) ---------------- */
+  /* WEBSOCKET CONNECTION --------------------------------------------------- */
   useEffect(() => {
     if (!identity || !signalingServer) return;
 
@@ -116,55 +111,71 @@ export default function HomePage() {
     }
 
     console.log("Connecting to signaling server:", signalingServer);
-
     registeredRef.current = false;
-    const ws = new WebSocket(signalingServer);
 
-    ws.onopen = () => {
-      console.log("WebSocket connected");
+    const ws = new WebSocket(toWss(signalingServer));
 
-      if (!registeredRef.current) {
-        ws.send(
-          JSON.stringify({
-            type: "register",
-            userName: identity.userName,
-          })
-        );
+    ws.onopen = async () => {
+      if (registeredRef.current) return;
 
-        registeredRef.current = true;
-        console.log("User registered on signaling server");
+      const serverKey = toHttp(signalingServer);
+      const token = localStorage.getItem(`token_${serverKey}`);
+
+      if (!token) {
+        console.warn("No token for server, cannot register:", signalingServer);
+        ws.close();
+        return;
       }
+
+      // identity.publicKey is a CryptoKey object — must export to base64
+      let publicKeyBase64;
+      try {
+        publicKeyBase64 = await exportPublicKey(identity.publicKey);
+      } catch (e) {
+        console.error("Failed to export public key:", e);
+        ws.close();
+        return;
+      }
+
+      // Verify the exported key matches the token before sending
+      try {
+        const payload = JSON.parse(atob(token.split(".")[1]));
+        console.log("Token user      :", payload.user);
+        console.log("publicKeyBase64 :", publicKeyBase64);
+        console.log("Keys match?     :", payload.user === publicKeyBase64);
+      } catch (e) {
+        console.warn("Could not decode token for debug:", e);
+      }
+
+      ws.send(JSON.stringify({
+        type: "register",
+        userName: identity.userName,
+        publicKey: publicKeyBase64,   // ← base64 string, not CryptoKey object
+        token,
+      }));
+
+      registeredRef.current = true;
     };
 
     ws.onmessage = (msg) => {
       const data = JSON.parse(msg.data);
       console.log("HomePage received:", data.type);
 
-      /* -------- Incoming Call -------- */
-      if (data.type === "call-request") {
-        const contact = contactsRef.current.find(
-          (c) => c.userName === data.from
-        );
-
-        if (!contact) {
-          console.error("Call from unknown contact:", data.from);
-
-          ws.send(
-            JSON.stringify({
-              type: "call-declined",
-              from: identity.userName,
-              to: data.from,
-            })
-          );
-
-          return;
-        }
-
-        setIncomingCall({ from: data.from, contact });
-        console.log("Call request received at ", Date.now());
+      if (data.type === "error") {
+        console.error("Server error:", data.message || data);
       }
 
-      /* -------- Caller cancelled -------- */
+      if (data.type === "call-request") {
+        const contact = contactsRef.current.find((c) => c.userName === data.from);
+        if (!contact) {
+          console.error("Call from unknown contact:", data.from);
+          ws.send(JSON.stringify({ type: "call-declined", from: identity.publicKey, to: data.from }));
+          return;
+        }
+        setIncomingCall({ from: data.from, contact });
+        console.log("Call request received at", Date.now());
+      }
+
       if (data.type === "call-cancelled") {
         if (incomingCall?.from === data.from) {
           setIncomingCall(null);
@@ -172,16 +183,12 @@ export default function HomePage() {
         }
       }
 
-      /* -------- Call declined -------- */
       if (data.type === "call-declined") {
         alert(`${data.from} declined your call.`);
       }
     };
 
-    ws.onerror = (err) => {
-      console.error("WebSocket error:", err);
-    };
-
+    ws.onerror = (err) => console.error("WebSocket error:", err);
     ws.onclose = () => {
       console.log("WebSocket disconnected");
       registeredRef.current = false;
@@ -189,182 +196,82 @@ export default function HomePage() {
 
     wsRef.current = ws;
 
-    return () => {
-      console.log("HomePage unmounted");
-    };
+    return () => { console.log("HomePage unmounted"); };
   }, [identity, signalingServer, incomingCall]);
 
-  /* ---------------- CALL HANDLER - Uses contact's server if available -------- */
+  /* CALL HANDLER ----------------------------------------------------------- */
   const handleCall = async (contact, selectedServerFromUI) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       alert("Connection not ready. Please wait.");
       return;
     }
 
-    console.log("Calling at ", Date.now());
-
     try {
-      const serverToUse =
-        selectedServerFromUI ||
-        contact.signalingServerURL ||
-        signalingServer;
+      const serverToUse = toWss(selectedServerFromUI || contact.signalingServerURL || signalingServer);
 
-      console.log("Checking server connectivity before calling", contact.userName);
-
-      // Check if contact's server is reachable
       if (contact.signalingServerURL) {
-        console.log("Contact has custom server, checking connectivity:", contact.signalingServerURL);
+        setServerCheckStatus(prev => ({ ...prev, [contact.userName]: "checking" }));
+        const isOnline = await checkServerConnectivity(contact.signalingServerURL);
 
-        setServerCheckStatus(prev => ({
-          ...prev,
-          [contact.userName]: "checking"
-        }));
-
-        const isServerOnline = await checkServerConnectivity(contact.signalingServerURL);
-
-        if (!isServerOnline) {
-          console.error(`Contact's server is offline: ${contact.signalingServerURL}`);
-
-          setServerCheckStatus(prev => ({
-            ...prev,
-            [contact.userName]: "offline"
-          }));
-
-          // Show alert
-          alert(
-            `⚠️ Server Offline\n\n` +
-            `${contact.userName}'s signaling server is unreachable.\n\n` +
-            `Server: ${contact.signalingServerURL}\n\n` +
-            `Please try again later or contact ${contact.userName} to check their server status.`
-          );
-
-          setTimeout(() => {
-            setServerCheckStatus(prev => {
-              const newStatus = { ...prev };
-              delete newStatus[contact.userName];
-              return newStatus;
-            });
-          }, 3000);
-
-          return;  // Stop call attempt
+        if (!isOnline) {
+          setServerCheckStatus(prev => ({ ...prev, [contact.userName]: "offline" }));
+          alert(`⚠️ Server Offline\n\n${contact.userName}'s signaling server is unreachable.\nServer: ${contact.signalingServerURL}`);
+          setTimeout(() => setServerCheckStatus(prev => { const s = { ...prev }; delete s[contact.userName]; return s; }), 3000);
+          return;
         }
 
-        console.log("Contact's server is ONLINE, proceeding with call");
-        setServerCheckStatus(prev => ({
-          ...prev,
-          [contact.userName]: "online"
-        }));
-      }
-
-      console.log("Calling", contact.userName, "using server:", serverToUse);
-
-      // If contact has their own server, set it as active
-      if (contact.signalingServerURL) {
-        console.log("Setting contact's server as active:", contact.signalingServerURL);
-        await identityManager.setActiveSignallingServer(identity.userName, contact.signalingServerURL);
-        setSignalingServer(contact.signalingServerURL);
+        setServerCheckStatus(prev => ({ ...prev, [contact.userName]: "online" }));
+        const wssURL = toWss(contact.signalingServerURL);
+        await identityManager.setActiveSignallingServer(identity.userName, wssURL);
+        setSignalingServer(wssURL);
       }
 
       navigate(`/call/${contact.userName}`, {
-        state: {
-          contact,
-          callInitiated: true,
-          signalingServer: serverToUse
-        },
+        state: { contact, callInitiated: true, signalingServer: serverToUse },
       });
 
-      // Clear status after navigation
-      setTimeout(() => {
-        setServerCheckStatus(prev => {
-          const newStatus = { ...prev };
-          delete newStatus[contact.userName];
-          return newStatus;
-        });
-      }, 1000);
-
+      setTimeout(() => setServerCheckStatus(prev => { const s = { ...prev }; delete s[contact.userName]; return s; }), 1000);
     } catch (err) {
       console.error("Error during call:", err);
       alert("Failed to initiate call: " + err.message);
     }
   };
 
-  /* ---------------- DELETE CONTACT ---------------- */
+  /* DELETE CONTACT --------------------------------------------------------- */
   const handleDelete = async (contact) => {
     try {
-      await identityManager.deleteContact(
-        identity.userName,
-        contact.userName
-      );
-
-      setContacts((prev) =>
-        prev.filter((c) => c.userName !== contact.userName)
-      );
-
-      console.log("Contact deleted:", contact.userName);
+      await identityManager.deleteContact(identity.userName, contact.userName);
+      setContacts(prev => prev.filter(c => c.userName !== contact.userName));
     } catch (err) {
       console.error("Failed to delete contact:", err);
       alert("Failed to delete contact.");
     }
   };
 
-  /* ---------------- ACCEPT CALL -------- */
+  /* ACCEPT CALL ------------------------------------------------------------ */
   const acceptCall = async () => {
     if (!incomingCall) return;
 
-    console.log("Accepting call at ", Date.now());
-
     try {
-      const serverToUse = incomingCall.contact.signalingServerURL || signalingServer;
+      const serverToUse = toWss(incomingCall.contact.signalingServerURL || signalingServer);
 
-      console.log("Checking server connectivity before accepting call from", incomingCall.from);
-
-      // Check if caller's server is reachable
       if (incomingCall.contact.signalingServerURL) {
-        console.log("Caller has custom server, checking connectivity:", incomingCall.contact.signalingServerURL);
+        const isOnline = await checkServerConnectivity(incomingCall.contact.signalingServerURL);
 
-        const isServerOnline = await checkServerConnectivity(incomingCall.contact.signalingServerURL);
-
-        if (!isServerOnline) {
-          console.error(`Caller's server is offline: ${incomingCall.contact.signalingServerURL}`);
-
-          // Decline the call
-          wsRef.current.send(
-            JSON.stringify({
-              type: "call-declined",
-              from: identity.userName,
-              to: incomingCall.from,
-            })
-          );
-
-          alert(
-            `⚠️ Server Offline\n\n` +
-            `${incomingCall.from}'s signaling server is unreachable.\n\n` +
-            `Server: ${incomingCall.contact.signalingServerURL}\n\n` +
-            `Call has been declined. Please try again later.`
-          );
-
+        if (!isOnline) {
+          wsRef.current.send(JSON.stringify({ type: "call-declined", from: identity.publicKey, to: incomingCall.from }));
+          alert(`⚠️ Server Offline\n\n${incomingCall.from}'s signaling server is unreachable.\nCall has been declined.`);
           setIncomingCall(null);
-          return;  // Stop call acceptance
+          return;
         }
 
-        console.log("Caller's server is ONLINE, proceeding with call");
-      }
-
-      console.log("Accepting call from", incomingCall.from, "using server:", serverToUse);
-
-      // If caller has their own server, set it as active
-      if (incomingCall.contact.signalingServerURL) {
-        console.log("Setting caller's server as active:", incomingCall.contact.signalingServerURL);
-        await identityManager.setActiveSignallingServer(identity.userName, incomingCall.contact.signalingServerURL);
-        setSignalingServer(incomingCall.contact.signalingServerURL);
+        const wssURL = toWss(incomingCall.contact.signalingServerURL);
+        await identityManager.setActiveSignallingServer(identity.userName, wssURL);
+        setSignalingServer(wssURL);
       }
 
       navigate(`/call/${incomingCall.from}`, {
-        state: {
-          contact: incomingCall.contact,
-          incomingCall: true,
-          signalingServer: serverToUse
-        },
+        state: { contact: incomingCall.contact, incomingCall: true, signalingServer: serverToUse },
       });
 
       setIncomingCall(null);
@@ -374,22 +281,14 @@ export default function HomePage() {
     }
   };
 
-  /* ---------------- REJECT CALL -------- */
+  /* REJECT CALL ------------------------------------------------------------ */
   const rejectCall = () => {
     if (!incomingCall) return;
-
-    wsRef.current.send(
-      JSON.stringify({
-        type: "call-declined",
-        from: identity.userName,
-        to: incomingCall.from,
-      })
-    );
-
+    wsRef.current.send(JSON.stringify({ type: "call-declined", from: identity.publicKey, to: incomingCall.from }));
     setIncomingCall(null);
   };
 
-  /* ---------------- UI ---------------- */
+  /* UI --------------------------------------------------------------------- */
   return (
     <div className="w-full min-h-screen flex flex-col">
       <Navbar
@@ -400,7 +299,6 @@ export default function HomePage() {
       />
 
       <main className="p-4 sm:p-6 flex-1">
-        {/* Contacts Section */}
         <div className="max-w-2xl mx-auto">
           <h2 className="text-2xl font-semibold mb-4">Connections</h2>
 
@@ -413,14 +311,10 @@ export default function HomePage() {
                   <UserCard
                     user={{
                       name: contact.userName,
-                      avatar:
-                        contact.avatar ||
-                        `https://placehold.co/80x80?text=${contact.userName
-                          .charAt(0)
-                          .toUpperCase()}`,
-                      status: contact.status || 'Available',
+                      avatar: contact.avatar || `https://placehold.co/80x80?text=${contact.userName.charAt(0).toUpperCase()}`,
+                      status: contact.status || "Available",
                       publicKey: contact.publicKey,
-                      signalingServers: contact.signalingServers || []
+                      signalingServers: contact.signalingServers || [],
                     }}
                     allContacts={contacts}
                     onClick={() => handleCall(contact)}
@@ -430,7 +324,6 @@ export default function HomePage() {
                     onSelectServer={setSelectedServer}
                   />
 
-                  {/* Server Status Indicator */}
                   {contact.signalingServerURL && serverCheckStatus[contact.userName] && (
                     <div className="absolute inset-0 rounded-xl flex items-center justify-center bg-black bg-opacity-70 backdrop-blur-sm z-40">
                       {serverCheckStatus[contact.userName] === "checking" && (
@@ -460,27 +353,12 @@ export default function HomePage() {
         </div>
       </main>
 
-      {/* INCOMING CALL POPUP */}
       {incomingCall && (
         <div className="fixed inset-0 bg-black/70 flex flex-col items-center justify-center z-50">
-          <h2 className="text-2xl text-white mb-4">
-            Incoming call from {incomingCall.from}
-          </h2>
-
+          <h2 className="text-2xl text-white mb-4">Incoming call from {incomingCall.from}</h2>
           <div className="flex gap-4">
-            <button
-              className="px-6 py-3 bg-green-600 text-white rounded hover:bg-green-700"
-              onClick={acceptCall}
-            >
-              Accept
-            </button>
-
-            <button
-              className="px-6 py-3 bg-red-600 text-white rounded hover:bg-red-700"
-              onClick={rejectCall}
-            >
-              Decline
-            </button>
+            <button className="px-6 py-3 bg-green-600 text-white rounded hover:bg-green-700" onClick={acceptCall}>Accept</button>
+            <button className="px-6 py-3 bg-red-600 text-white rounded hover:bg-red-700" onClick={rejectCall}>Decline</button>
           </div>
         </div>
       )}
