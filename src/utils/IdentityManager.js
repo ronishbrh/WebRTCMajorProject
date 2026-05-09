@@ -503,6 +503,30 @@ export class IdentityManager {
 		return record.activeSignallingServer || null;
 	}
 
+	async updateContactSignalingServer(userName, contactUserName, serverURL) {
+		const record = await this._getObject("keys", userName);
+		if (!record) throw new Error("User not found");
+
+		const contact = record.contacts.find(c => c.userName === contactUserName);
+		if (!contact) throw new Error("Contact not found");
+
+		if (serverURL === null) {
+			// Remove the signalingServerURL entirely
+			delete contact.signalingServerURL;
+			contact.signalingServers = (contact.signalingServers || []);
+		} else {
+			contact.signalingServerURL = serverURL;
+			contact.signalingServers = contact.signalingServers || [];
+			if (!contact.signalingServers.includes(serverURL)) {
+				contact.signalingServers.push(serverURL);
+			}
+		}
+
+		await this._storeObject("keys", userName, record);
+		return contact;
+	}
+
+
 	// ================= SERVER ACCESS CONTROL =================
 
 	async requestSignallingServerAccess(userName, serverUrl) {
