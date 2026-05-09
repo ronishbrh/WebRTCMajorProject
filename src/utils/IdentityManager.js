@@ -12,8 +12,7 @@ export class IdentityManager {
 
 		return new Promise((resolve, reject) => {
 
-			const request =
-				indexedDB.open(this.dbName, 1);
+			const request = indexedDB.open(this.dbName, 1);
 
 			request.onupgradeneeded = (e) => {
 
@@ -21,11 +20,9 @@ export class IdentityManager {
 				if (!db.objectStoreNames.contains("userData")) db.createObjectStore("userData");
 			};
 
-			request.onsuccess = () =>
-				resolve(request.result);
+			request.onsuccess = () => resolve(request.result);
 
-			request.onerror = () =>
-				reject(request.error);
+			request.onerror = () => reject(request.error);
 		});
 	}
 
@@ -35,16 +32,13 @@ export class IdentityManager {
 
 		return new Promise((resolve, reject) => {
 
-			const tx =
-				db.transaction(storeName, "readwrite");
+			const tx = db.transaction(storeName, "readwrite");
 
-			tx.objectStore(storeName)
-				.put(value, key);
+			tx.objectStore(storeName).put(value, key);
 
 			tx.oncomplete = () => resolve();
 
-			tx.onerror = () =>
-				reject(tx.error);
+			tx.onerror = () => reject(tx.error);
 		});
 	}
 
@@ -54,17 +48,13 @@ export class IdentityManager {
 
 		return new Promise((resolve, reject) => {
 
-			const tx =
-				db.transaction(storeName, "readonly");
+			const tx = db.transaction(storeName, "readonly");
 
-			const request =
-				tx.objectStore(storeName).get(key);
+			const request = tx.objectStore(storeName).get(key);
 
-			request.onsuccess = () =>
-				resolve(request.result || null);
+			request.onsuccess = () => resolve(request.result || null);
 
-			request.onerror = () =>
-				reject(request.error);
+			request.onerror = () => reject(request.error);
 		});
 	}
 
@@ -72,14 +62,13 @@ export class IdentityManager {
 
 	async _deriveAESKey(password, salt) {
 
-		const pwKey =
-			await crypto.subtle.importKey(
-				"raw",
-				new TextEncoder().encode(password),
-				{ name: "PBKDF2" },
-				false,
-				["deriveKey"]
-			);
+		const pwKey = await crypto.subtle.importKey(
+			"raw",
+			new TextEncoder().encode(password),
+			{ name: "PBKDF2" },
+			false,
+			["deriveKey"]
+		);
 
 		return crypto.subtle.deriveKey(
 			{
@@ -99,7 +88,6 @@ export class IdentityManager {
 	}
 
 	async encryptWithPassphrase(obj, password) {
-
 		const salt = crypto.getRandomValues(new Uint8Array(16));
 		const iv = crypto.getRandomValues(new Uint8Array(12));
 
@@ -139,22 +127,6 @@ export class IdentityManager {
 	}
 
 
-	//async _encrypt(data, aesKey) {
-	//	const iv = crypto.getRandomValues(new Uint8Array(12));
-	//	const ciphertext = await crypto.subtle.encrypt(
-	//		{ name: "AES-GCM", iv },
-	//		aesKey,
-	//		new TextEncoder().encode(JSON.stringify(data))
-	//	);
-	//	return { iv: Array.from(iv), ciphertext: Array.from(new Uint8Array(ciphertext)) };
-	//}
-
-	//async _decrypt(encrypted, aesKey) {
-	//	const iv = new Uint8Array(encrypted.iv);
-	//	const ciphertext = new Uint8Array(encrypted.ciphertext);
-	//	const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, aesKey, ciphertext);
-	//	return JSON.parse(new TextDecoder().decode(decrypted));
-	//}
 
 	// ---------------- Create new user identity ----------------
 	async createUser(userName, password) {
@@ -261,8 +233,7 @@ export class IdentityManager {
 	async getContactSignallingServers(contactUserName) {
 		const contact = this.userData.contacts.find(c => c.userName === contactUserName);
 
-		if (!contact)
-			throw new Error("Contact not found");
+		if (!contact) throw new Error("Contact not found");
 
 		return contact.signallingServers;
 	}
@@ -286,11 +257,8 @@ export class IdentityManager {
 		await this.storeEncryptedUserData();
 
 		await new Promise((resolve, reject) => {
-
 			tx.oncomplete = resolve;
-
-			tx.onerror = () =>
-				reject(tx.error);
+			tx.onerror = () => reject(tx.error);
 		});
 	}
 
@@ -349,7 +317,7 @@ export class IdentityManager {
 
 	// ================= SIGNALLING SERVERS =================
 
-	async addSignallingServer(url, own = false) {
+	async addSignallingServer(url) {
 
 		const exists = this.userData.signallingServers.find((server) => server.url === url)
 
@@ -357,7 +325,10 @@ export class IdentityManager {
 			this.userData.signallingServers.push({
 				url,
 				token: null,
-				own,
+				own: false,
+				requested: false,
+				revoked: false,
+				requestedAt: null
 			});
 			await this.storeEncryptedUserData();
 		}
@@ -382,14 +353,35 @@ export class IdentityManager {
 		await this.storeEncryptedUserData();
 	}
 
-	// Set active signaling server for user
-	//async setActiveSignallingServer(url) {
-	//	this.userData.activeSignallingServer = url;
-	//	await this.storeEncryptedUserData();
-	//}
+	// ================= SERVER ACCESS CONTROL =================
 
-	//// Get active signaling server for user
-	//getActiveSignallingServer() {
-	//	return this.userData.activeSignallingServer;
-	//}
+	async requestSignallingServerAccess(url) {
+		const server = this.userData.signallingServers.find((server) => server.url === url);
+
+		if (server) {
+			server.requested = true;
+			server.requestedAt = Date.now()
+			await this.storeEncryptedUserData();
+		}
+	}
+
+	async revokeSignallingServerAccess(url) {
+
+		const server = this.userData.signallingServers.find((server) => server.url === url);
+
+		if (server) {
+			server.requested = false;
+			server.revoked = true;
+			await this.storeEncryptedUserData();
+		}
+	}
+
+	async getSignallingServerAccessStatus(url) {
+
+		const server = this.userData.signallingServers.find((server) => server.url === url);
+
+		if (server) {
+			return server.signallingServers;
+		}
+	}
 }

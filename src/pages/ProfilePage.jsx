@@ -7,6 +7,7 @@ import { FaQrcode } from "react-icons/fa";
 import Navbar from "../components/Navbar.jsx";
 import { useUser } from "../utils/UserContext";
 import { exportECDSAPublicKey } from "../utils/crypto";
+import pako from "pako";
 
 import profileIcon from "../assets/userProfileGeneric.png";
 
@@ -19,8 +20,36 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState("");
 
+
+  const [signalingServers, setSignalingServers] = useState([]);
+
   const qrRef = useRef();
 
+  useEffect(() => {
+    if (!identity) return;
+
+    const load = async () => {
+      const record = await identityManager._getObject("keys", identity.userName);
+
+      const servers = (record?.signallingServers || []).map(s => s.url);
+
+      setSignalingServers(servers);
+    };
+
+    load();
+  }, [identity]);
+
+
+  const buildQRData = () => {
+    const data = JSON.stringify({
+      t: "c",
+      n: identity?.userName,
+      k: pubKey,
+      s: signalingServers
+    });
+
+    return btoa(String.fromCharCode(...pako.deflate(data)));
+  };
 
 
   const saveName = async () => {
@@ -75,7 +104,7 @@ export default function ProfilePage() {
     });
   };
 
- 
+
 
   useEffect(() => {
     if (!identityManager) {
@@ -166,6 +195,16 @@ export default function ProfilePage() {
                   <FaQrcode size={22} />
                 </button>
               </div>
+              <button
+                onClick={() => navigate("/admin")}
+                style={{
+                  padding: "10px 15px",
+                  marginTop: "20px",
+                  cursor: "pointer"
+                }}
+              >
+                Manage Server (Admin Panel)
+              </button>
             </div>
           </div>
         </div>
@@ -180,7 +219,7 @@ export default function ProfilePage() {
             </h3>
 
             <div ref={qrRef} className="flex justify-center mb-4">
-              <QRCodeCanvas value={pubKey} size={200} />
+              <QRCodeCanvas value={buildQRData()} size={200} />
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3">

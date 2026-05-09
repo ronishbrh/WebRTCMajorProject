@@ -5,14 +5,17 @@ import App from './App.jsx'
 import { UserProvider } from "./utils/UserContext.jsx";
 import { registerSW } from 'virtual:pwa-register'
 
+
+
 registerSW()
 
 createRoot(document.getElementById('root')).render(
 
 	<UserProvider>
-		<BrowserRouter>
-			<App />
-		</BrowserRouter>
+			<BrowserRouter>
+				<App />
+			</BrowserRouter>
+
 	</UserProvider>
 
 )

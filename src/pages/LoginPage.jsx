@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { IdentityManager } from "../utils/IdentityManager";
 
-
 export default function Login({ onUnlocked }) {
 	const [userName, setUserName] = useState("");
 	const [password, setPassword] = useState("");

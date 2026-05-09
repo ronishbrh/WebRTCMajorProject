@@ -2,9 +2,10 @@ import { useEffect, useState, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import Navbar from "../components/Navbar.jsx";
 import { useUser } from "../utils/UserContext";
-import { importECDSAPublicKey } from "../utils/crypto.js";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import { Camera, Upload } from "lucide-react";
+
+import pako from "pako";
 
 export default function ContactPage() {
     const navigate = useNavigate();
@@ -23,7 +24,6 @@ export default function ContactPage() {
     const [message, setMessage] = useState("");
     const [messageType, setMessageType] = useState("");
 
-    const qrRegionId = "qr-reader";
 
     const qrScannerRef = useRef(null);
 
@@ -35,15 +35,58 @@ export default function ContactPage() {
 
             setPublicKey(existingContact.publicKey || "");
 
-            const servers =
-                existingContact.signalingServers ||
-                (existingContact.signalingServerURL
-                    ? [existingContact.signalingServerURL]
-                    : []);
-
+            const servers = existingContact.signallingServers;
             setSignalingURLs(servers.length ? servers : [""]);
         }
     }, [editMode, existingContact]);
+
+
+    const parseQRData = (qrText) => {
+        try {
+            const json = pako.inflate(
+                Uint8Array.from(atob(qrText), c => c.charCodeAt(0)),
+                { to: "string" }
+            );
+
+            return JSON.parse(json);
+
+        } catch (e) {
+            try {
+                return JSON.parse(qrText);
+            } catch {
+                return {
+                    publicKey: qrText
+                };
+            }
+        }
+    };
+
+    const applyQRData = (data) => {
+        console.log("QR Parsed:", data);
+
+        if (data.n || data.userName) {
+            setUserName(data.n || data.userName);
+        }
+
+        if (data.k || data.publicKey) {
+            setPublicKey(data.k || data.publicKey);
+        }
+
+        if (data.s || data.signalingServers) {
+            let servers = data.s || data.signalingServers;
+
+            if (Array.isArray(servers)) {
+
+                const normalized = servers.map(s =>
+                    typeof s === "string" ? s : s.url
+                ).filter(Boolean);
+
+                if (normalized.length > 0) {
+                    setSignalingURLs(normalized);
+                }
+            }
+        }
+    };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -62,7 +105,8 @@ export default function ContactPage() {
             const contact = {
                 userName,
                 publicKey: publicKey.trim(),
-                signallingServers: cleanedServers
+                signallingServers: cleanedServers,
+				selectedSignallingServer: cleanedServers.length > 0 ? cleanedServers[0] : null,
             };
 
             if (editMode) {
@@ -71,10 +115,6 @@ export default function ContactPage() {
                     originalUserName,
                     contact
                 );
-
-                const cleanedServers = signalingURLs
-                    .map(url => url.trim())
-                    .filter(Boolean);
 
                 for (const url of cleanedServers) {
                     await identityManager.addSignallingServer(
@@ -164,11 +204,12 @@ export default function ContactPage() {
                 videoElement,
                 (result, err) => {
                     if (result) {
-                        setPublicKey(result.getText().trim());
+                        const text = result.getText().trim();
 
-                        // ✅ STOP CAMERA PROPERLY
+                        const parsed = parseQRData(text);
+
+                        applyQRData(parsed);
                         controlsRef.current?.stop();
-
                         qrScannerRef.current = null;
                         controlsRef.current = null;
                     }
@@ -193,7 +234,11 @@ export default function ContactPage() {
                 URL.createObjectURL(file)
             );
 
-            setPublicKey(result.getText().trim());
+            const text = result.getText().trim();
+
+            const parsed = parseQRData(text);
+
+            applyQRData(parsed);
 
         } catch (err) {
             console.error(err);
@@ -217,6 +262,8 @@ export default function ContactPage() {
             controlsRef.current = null;
         };
     }, [identityManager, navigate]);
+
+	if(!identityManager) return null;
 
     return (
         <div className="w-full min-h-screen flex flex-col">

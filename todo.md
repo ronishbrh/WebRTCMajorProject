@@ -1,6 +1,7 @@
 # Sorting according to importance
-- [ ] Contact share garda afule registered signalling servers ko list pani share garne. Arko le chahi ti sab servers lai add garne. hence, a list of signalling server url is associated with a contact
-- [ ] Since a persistant websocket exists for every signalling server, every status check can be performed on that websocket.
+- [x] Contact share garda afule registered signalling servers ko list pani share garne. Arko le chahi ti sab servers lai add garne. hence, a list of signalling server url is associated with a contact
+- [ ] Show all contact's servers in dropdown list. but don't allow seleting those servers for which the client has no access to.
+- [ ] Since a persistant websocket exists for every signalling server, every status check can be performed on that websocket. Or, the /health api can also be used
 - [ ] righ now, connection to all signalling server is made only when first time the homepage is loaded. connection to new signalling server should also be made after they are added from signalling server page or from contact page.
 - [ ] When relogging the key of the user is changed sometime. Happened on my phone.
 - [ ] Implement authentication and security between signaling server and the clients.
