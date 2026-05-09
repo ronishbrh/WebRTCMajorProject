@@ -123,8 +123,6 @@ export default function UserCard({ user, allContacts, onClick, onCall, onDelete}
 
       setServerStatusMap(result);
     };
-
-    if (commonServers.length) checkAll();
   }, [commonServers]);
 
   return (

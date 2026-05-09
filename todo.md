@@ -1,12 +1,10 @@
 # Sorting according to importance
-- [x] Contact share garda afule registered signalling servers ko list pani share garne. Arko le chahi ti sab servers lai add garne. hence, a list of signalling server url is associated with a contact
-- [x] Able to use proper signalling server for calling a user.
-- [x] Listen for calls from all signalling server.
+- [ ] Contact share garda afule registered signalling servers ko list pani share garne. Arko le chahi ti sab servers lai add garne. hence, a list of signalling server url is associated with a contact
+- [ ] Since a persistant websocket exists for every signalling server, every status check can be performed on that websocket.
+- [ ] righ now, connection to all signalling server is made only when first time the homepage is loaded. connection to new signalling server should also be made after they are added from signalling server page or from contact page.
 - [ ] When relogging the key of the user is changed sometime. Happened on my phone.
 - [ ] Implement authentication and security between signaling server and the clients.
-- [x] Check combination between ISPs. Contact them if needed.
 - [ ] able to import/export account
-- [x] Put the hardcoded signaling server for the client in the signaling server list.
 - [ ] Handle renegotiation, retry call
 - [ ] Improve UI for mobile screens.
 - [ ] User lai public key le chinne. even in server. Maile kasaiko key aru bata liye vane usko name ma afno marji le rakhna sakxu(e.g. vai, uncle). server ma name check garnu thik xaina. public key le nai user lai uniqely identify garne.
@@ -15,6 +13,10 @@
 - [ ] List supported resolution. afaile arbitrary resolution set garne milne hoki number of supported resolution ho.
 - [ ] List front and rear cameras in mobile phones.
 - [ ] Euta signaling server delete garda either warn users about the contacts using that server or don't delete the server but only make it unregistered.
+- [x] Put the hardcoded signaling server for the client in the signaling server list.
+- [x] Check combination between ISPs. Contact them if needed.
+- [x] Able to use proper signalling server for calling a user.
+- [x] Listen for calls from all signalling server.
 - [x] QR
 - [x] Better QR. Works but Do not apply night theme.
 - [x] Make the client PWA
