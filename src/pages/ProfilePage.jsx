@@ -29,11 +29,7 @@ export default function ProfilePage() {
     if (!identity) return;
 
     const load = async () => {
-      const record = await identityManager._getObject("keys", identity.userName);
-
-      const servers = (record?.signallingServers || []).map(s => s.url);
-
-      setSignalingServers(servers);
+      setSignalingServers(identityManager.getSignallingServers());
     };
 
     load();

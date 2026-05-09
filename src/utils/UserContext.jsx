@@ -89,7 +89,10 @@ export class SocketManager {
 
 			if (handler) {
 				handler(data);
+			} else {
+				console.error("Msg wasn't handled:", data.type);
 			}
+				
 		};
 	}
 

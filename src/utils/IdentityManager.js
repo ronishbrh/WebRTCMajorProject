@@ -229,6 +229,29 @@ export class IdentityManager {
 		await this.storeEncryptedUserData();
 	}
 
+	//async updateContactSignalingServer(userName, contactUserName, serverURL) {
+	//	const record = await this._getObject("keys", userName);
+	//	if (!record) throw new Error("User not found");
+
+	//	const contact = record.contacts.find(c => c.userName === contactUserName);
+	//	if (!contact) throw new Error("Contact not found");
+
+	//	if (serverURL === null) {
+	//		// Remove the signalingServerURL entirely
+	//		delete contact.signalingServerURL;
+	//		contact.signalingServers = (contact.signalingServers || []);
+	//	} else {
+	//		contact.signalingServerURL = serverURL;
+	//		contact.signalingServers = contact.signalingServers || [];
+	//		if (!contact.signalingServers.includes(serverURL)) {
+	//			contact.signalingServers.push(serverURL);
+	//		}
+	//	}
+
+	//	await this._storeObject("keys", userName, record);
+	//	return contact;
+	//}
+
 	// Get signaling server for a specific contact
 	async getContactSignallingServers(contactUserName) {
 		const contact = this.userData.contacts.find(c => c.userName === contactUserName);
@@ -324,10 +347,10 @@ export class IdentityManager {
 		if (!exists) {
 			this.userData.signallingServers.push({
 				url,
-				token: null,
 				own: false,
 				requested: false,
 				revoked: false,
+				registered: false,
 				requestedAt: null
 			});
 			await this.storeEncryptedUserData();
@@ -353,6 +376,8 @@ export class IdentityManager {
 		await this.storeEncryptedUserData();
 	}
 
+
+
 	// ================= SERVER ACCESS CONTROL =================
 
 	async requestSignallingServerAccess(url) {
@@ -366,17 +391,28 @@ export class IdentityManager {
 	}
 
 	async revokeSignallingServerAccess(url) {
-
 		const server = this.userData.signallingServers.find((server) => server.url === url);
 
 		if (server) {
 			server.requested = false;
 			server.revoked = true;
+			server.registered = false;
 			await this.storeEncryptedUserData();
 		}
 	}
 
-	async getSignallingServerAccessStatus(url) {
+	async registerSignallingServerAccess(url) {
+		const server = this.userData.signallingServers.find((server) => server.url === url);
+
+		if (server) {
+			server.registered = true;
+			server.requested = false;
+			server.requested = false;
+			await this.storeEncryptedUserData();
+		}
+	}
+
+	getSignallingServerAccessStatus(url) {
 
 		const server = this.userData.signallingServers.find((server) => server.url === url);
 

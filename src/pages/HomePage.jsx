@@ -22,7 +22,7 @@ function toHttp(url) {
 
 export default function HomePage() {
 	const navigate = useNavigate();
-	const { identityManager, addSocket, getSocket, allServerConnected, setAllServerConnected } = useUser();
+	const { identityManager, addSocket, getSocket, removeSocket, allServerConnected, setAllServerConnected } = useUser();
 
 	const [contacts, setContacts] = useState([]);
 	const incomingCallRef = useRef(null);
@@ -70,6 +70,16 @@ export default function HomePage() {
 		if (!allServerConnected) {
 			for (const server of servers) {
 
+				if (!server.registered) {
+					continue;
+				}
+
+				const token = localStorage.getItem(`token_${toHttp(server.url)}`);
+
+				if (!token) {
+					continue;
+				}
+
 				const ws = new WebSocket(server.url); //also handle the token part later
 				//ws.send(JSON.stringify({
 				//  type: "register",
@@ -84,6 +94,7 @@ export default function HomePage() {
 						JSON.stringify({
 							type: "register",
 							userName: identityManager.getUserName(),
+							token,
 						})
 					);
 
@@ -176,6 +187,14 @@ export default function HomePage() {
 
 				unsubscribers.push(unsubscriber);
 
+				unsubscriber = sm.subscribe("error", (data) => {
+					localStorage.removeItem(`token_${toHttp(server.url)}`);
+					removeSocket(server.url);
+					console.error("Server error:", data.message || data);
+				});
+
+				unsubscribers.push(unsubscriber);
+
 				addSocket(server.url, sm);
 			}
 			setAllServerConnected(true);
@@ -195,7 +214,7 @@ export default function HomePage() {
 		try {
 			const serverToUse = contact.selectedSignallingServer; // use selectedSignallingServer instead
 
-			if(!serverToUse) {
+			if (!serverToUse) {
 				alert(`Select a registered signalling server to use.`);
 				return;
 			};
