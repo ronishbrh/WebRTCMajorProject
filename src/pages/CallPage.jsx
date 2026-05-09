@@ -444,30 +444,22 @@ export default function CallPage() {
 				}));
 
 				if (callAlreadyAccepted) {
-					// call-accepted was already consumed by HomePage — jump straight to handshake
-					console.log("callAlreadyAccepted: starting handshake immediately");
+					// Caller: callee already accepted on HomePage.
+					// HomePage sent call-accepted and navigated callee to CallPage.
+					// We (caller) now register and immediately start the handshake.
+					console.log("callAlreadyAccepted: caller starting handshake");
 					setIsCalling(false);
 					setCallAnswered(true);
-					// startHandshake needs ws to be open — call after a tick
-					setTimeout(() => startHandshake(), 0);
+					setTimeout(() => startHandshake(), 100); // small delay for register to process
 					return;
 				}
 
-				if (callInitiatedFromHome) {
-					setIsCalling(true);
-					ws.send(JSON.stringify({ type: "call-request", from: identity.userName, to: contact.userName }));
-					callTimeoutRef.current = setTimeout(() => {
-						if (!callAnswered) {
-							ws.send(JSON.stringify({ type: "call-cancelled", from: identity.userName, to: contact.userName }));
-							cleanupMedia();
-							navigate("/");
-						}
-					}, 30000);
-				}
-
 				if (incomingCallAccepted) {
+					// Callee: we accepted on HomePage which already sent call-accepted.
+					// Just register and wait for the caller's "join" message.
+					console.log("incomingCallAccepted: callee registered, waiting for join");
 					setCallAnswered(true);
-					ws.send(JSON.stringify({ type: "call-accepted", from: identity.userName, to: contact.userName }));
+					// Do NOT send call-accepted again — HomePage already sent it
 				}
 			};
 
