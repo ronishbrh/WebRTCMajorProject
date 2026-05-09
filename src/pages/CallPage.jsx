@@ -444,13 +444,15 @@ export default function CallPage() {
 				}));
 
 				if (callAlreadyAccepted) {
-					// Caller: callee already accepted on HomePage.
-					// HomePage sent call-accepted and navigated callee to CallPage.
-					// We (caller) now register and immediately start the handshake.
-					console.log("callAlreadyAccepted: caller starting handshake");
+					// Caller: callee already accepted. HomePage WS is now closed on both sides.
+					// Give callee's CallPage ~500ms to register before we send join.
+					console.log("callAlreadyAccepted: caller will start handshake after delay");
 					setIsCalling(false);
 					setCallAnswered(true);
-					setTimeout(() => startHandshake(), 100); // small delay for register to process
+					setTimeout(() => {
+						console.log("Sending join to", contact.userName);
+						startHandshake();
+					}, 500);
 					return;
 				}
 

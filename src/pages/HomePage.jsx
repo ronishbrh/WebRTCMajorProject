@@ -150,21 +150,21 @@ export default function HomePage() {
         alert(`${data.from} declined your call.`);
       }
 
-      /* ── Callee accepted our outgoing call ──
-           Both sides navigate NOW — caller with callAlreadyAccepted=true
-           so CallPage knows to initiate the handshake immediately.        */
+      /* ── Callee accepted our outgoing call ── */
       if (data.type === "call-accepted") {
-        console.log("HomePage: call-accepted received, navigating caller to CallPage");
+        console.log("HomePage: call-accepted received, closing WS then navigating");
         clearTimeout(callTimeoutRef.current);
         const oc = outgoingCallRef.current;
         if (!oc) return;
         setOutgoingCall(null);
         outgoingCallRef.current = null;
+        // Close HomePage WS so server deregisters us here before CallPage re-registers
+        ws.close();
         navigate(`/call/${oc.contact.userName}`, {
           state: {
             contact: oc.contact,
             callInitiated: true,
-            callAlreadyAccepted: true,   // ← callee already accepted; start handshake right away
+            callAlreadyAccepted: true,
             signalingServer: oc.server,
           },
         });
@@ -254,7 +254,7 @@ export default function HomePage() {
       }
     }
 
-    // Send call-accepted FIRST, then navigate
+    // Send call-accepted FIRST, close WS, then navigate
     wsRef.current.send(JSON.stringify({
       type: "call-accepted",
       from: identity.userName,
@@ -263,6 +263,9 @@ export default function HomePage() {
 
     const contact = incomingCall.contact;
     setIncomingCall(null);
+
+    // Close HomePage WS so server deregisters callee here before CallPage re-registers
+    wsRef.current.close();
 
     navigate(`/call/${contact.userName}`, {
       state: {
