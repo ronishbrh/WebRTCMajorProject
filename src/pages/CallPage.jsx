@@ -81,10 +81,11 @@ export default function CallPage() {
 	const navigate = useNavigate();
 
 	const callInitiatedFromHome = Boolean(location.state?.callInitiated);
-	const incomingCallAccepted = Boolean(location.state?.incomingCall);
+	const incomingCallAccepted  = Boolean(location.state?.incomingCall);
+	const callAlreadyAccepted   = Boolean(location.state?.callAlreadyAccepted); // callee accepted while still on HomePage
 
-	const [isCalling, setIsCalling] = useState(callInitiatedFromHome);
-	const [callAnswered, setCallAnswered] = useState(false);
+	const [isCalling, setIsCalling] = useState(callInitiatedFromHome && !callAlreadyAccepted);
+	const [callAnswered, setCallAnswered] = useState(callAlreadyAccepted);
 	const callTimeoutRef = useRef(null);
 
 	const showControls = useCallback(() => {
@@ -435,17 +436,22 @@ export default function CallPage() {
 			wsRef.current = ws;
 
 			ws.onopen = () => {
-				if (!token) {
-					console.warn("No token found for server:", signalingServer);
-					// Still attempt registration — server will reject if token required
-				}
-
 				ws.send(JSON.stringify({
 					type: "register",
 					userName: identity.userName,
-					publicKey: publicKeyBase64,   // ← base64 string
-					token: token || "",            // ← JWT from localStorage
+					publicKey: publicKeyBase64,
+					token: token || "",
 				}));
+
+				if (callAlreadyAccepted) {
+					// call-accepted was already consumed by HomePage — jump straight to handshake
+					console.log("callAlreadyAccepted: starting handshake immediately");
+					setIsCalling(false);
+					setCallAnswered(true);
+					// startHandshake needs ws to be open — call after a tick
+					setTimeout(() => startHandshake(), 0);
+					return;
+				}
 
 				if (callInitiatedFromHome) {
 					setIsCalling(true);

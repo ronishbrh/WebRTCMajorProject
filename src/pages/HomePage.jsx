@@ -186,6 +186,24 @@ export default function HomePage() {
       if (data.type === "call-declined") {
         alert(`${data.from} declined your call.`);
       }
+
+      // ── KEY FIX: caller receives call-accepted on HomePage before CallPage
+      // is mounted. Forward it via navigation so CallPage can start handshake.
+      if (data.type === "call-accepted") {
+        console.log("HomePage received call-accepted from", data.from, "— forwarding to CallPage");
+        const contact = contactsRef.current.find((c) => c.userName === data.from);
+        if (contact) {
+          const serverToUse = toWss(contact.signalingServerURL || signalingServer);
+          navigate(`/call/${data.from}`, {
+            state: {
+              contact,
+              callInitiated: true,
+              callAlreadyAccepted: true,   // ← tells CallPage to skip waiting
+              signalingServer: serverToUse,
+            },
+          });
+        }
+      }
     };
 
     ws.onerror = (err) => console.error("WebSocket error:", err);
