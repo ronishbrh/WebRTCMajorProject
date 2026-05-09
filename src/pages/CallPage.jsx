@@ -18,6 +18,25 @@ const RESOLUTIONS = {
 	high: { width: 1920, height: 1080, label: "Full HD (1080p)" }
 };
 
+// ── URL helpers ──────────────────────────────────────────────────────────────
+function toWss(url) {
+	if (!url) return url;
+	if (url.startsWith("https://")) return url.replace("https://", "wss://");
+	if (url.startsWith("http://"))  return url.replace("http://",  "ws://");
+	return url;
+}
+
+function toHttp(url) {
+	if (!url) return url;
+	if (url.startsWith("wss://")) return url.replace("wss://", "https://");
+	if (url.startsWith("ws://"))  return url.replace("ws://",  "http://");
+	return url;
+}
+
+async function exportPublicKey(cryptoKey) {
+	const spki = await crypto.subtle.exportKey("spki", cryptoKey);
+	return btoa(String.fromCharCode(...new Uint8Array(spki)));
+}
 
 export default function CallPage() {
 	const location = useLocation();
@@ -81,21 +100,18 @@ export default function CallPage() {
 				(await identityManager.getActiveSignallingServer(identity.userName)) ||
 				"wss://webrtc-signaling-server-up3e.onrender.com";
 
-			setSignalingServer(fallback);
+			setSignalingServer(toWss(fallback));
 		};
 
 		if (identity && contact) loadServer();
 	}, [identity, contact, location.state]);
 
 	useEffect(() => {
-		// auto-hide timer
 		showControls();
 		return () => {
 			if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
 		};
 	}, [showControls]);
-
-
 
 	// ---- Media helpers ----
 	const requestMediaStream = async (resolutionKey) => {
@@ -136,7 +152,6 @@ export default function CallPage() {
 		}
 	}, []);
 
-
 	const endCallAndNavigate = useCallback(() => {
 		cleanupMedia();
 		navigate("/");
@@ -158,24 +173,12 @@ export default function CallPage() {
 		const message = JSON.parse(data);
 		const pc = pcRef.current;
 
-		if (message.type === "call-cancelled") {
-			cleanupMedia();
-			navigate("/");
-			return;
-		}
-
-		if (message.type === "call-declined") {
-			cleanupMedia();
-			navigate("/");
-			return;
-		}
+		if (message.type === "call-cancelled") { cleanupMedia(); navigate("/"); return; }
+		if (message.type === "call-declined")  { cleanupMedia(); navigate("/"); return; }
 
 		if (message.type === "call-accepted") {
 			console.log("Call acceptance received at", Date.now());
-			if (callTimeoutRef.current) {
-				clearTimeout(callTimeoutRef.current);
-				callTimeoutRef.current = null;
-			}
+			if (callTimeoutRef.current) { clearTimeout(callTimeoutRef.current); callTimeoutRef.current = null; }
 			setIsCalling(false);
 			setCallAnswered(true);
 			await startHandshake();
@@ -246,7 +249,6 @@ export default function CallPage() {
 
 				const offer = await pc.createOffer();
 				await pc.setLocalDescription(offer);
-
 				const encoder = new TextEncoder();
 				const sdpBuffer = encoder.encode(offer.sdp);
 				const { iv, encrypted } = await encryptAES(sdpBuffer, AESKey.current);
@@ -319,18 +321,13 @@ export default function CallPage() {
 		if (message.type === "end-call") {
 			console.log("Remote user ended call");
 			setShowEndCallNotification(true);
-			setTimeout(() => {
-				endCallAndNavigate();
-			}, 2500);
+			setTimeout(() => endCallAndNavigate(), 2500);
 		}
 
 	}, [identity, contact, cleanupMedia, navigate, endCallAndNavigate]);
 
 	async function sendCandidate(candidate) {
-		if (!AESKey.current) {
-			pendingIceCandidates.current.push(candidate);
-			return;
-		}
+		if (!AESKey.current) { pendingIceCandidates.current.push(candidate); return; }
 		const candidateBuffer = new TextEncoder().encode(JSON.stringify(candidate));
 		const { iv, encrypted } = await encryptAES(candidateBuffer, AESKey.current);
 		wsRef.current.send(JSON.stringify({
@@ -350,11 +347,7 @@ export default function CallPage() {
 	useEffect(() => {
 		if (error) {
 			setShowError(true);
-			const timer = setTimeout(() => {
-				setShowError(false);
-
-			}, 5000);
-
+			const timer = setTimeout(() => setShowError(false), 5000);
 			return () => clearTimeout(timer);
 		}
 	}, [error]);
@@ -416,7 +409,7 @@ export default function CallPage() {
 							outboundResolutionHeight: stats.outboundResolutionHeight ?? null,
 						});
 					});
-					console.log("Call established at ", Date.now());
+					console.log("Call established at", Date.now());
 					tester.start(1000);
 					pcRef.current._tester = tester;
 				}
@@ -428,11 +421,31 @@ export default function CallPage() {
 
 			ECDHKeyPair.current = await generateECDHKeys();
 
-			const ws = new WebSocket(signalingServer);
+			// ── KEY FIX: export publicKey to base64 and include token ──
+			const serverKey = toHttp(signalingServer);
+			const token = localStorage.getItem(`token_${serverKey}`);
+			let publicKeyBase64 = "";
+			try {
+				publicKeyBase64 = await exportPublicKey(identity.publicKey);
+			} catch (e) {
+				console.error("Failed to export public key:", e);
+			}
+
+			const ws = new WebSocket(toWss(signalingServer));
 			wsRef.current = ws;
 
 			ws.onopen = () => {
-				ws.send(JSON.stringify({ type: "register", userName: identity.userName }));
+				if (!token) {
+					console.warn("No token found for server:", signalingServer);
+					// Still attempt registration — server will reject if token required
+				}
+
+				ws.send(JSON.stringify({
+					type: "register",
+					userName: identity.userName,
+					publicKey: publicKeyBase64,   // ← base64 string
+					token: token || "",            // ← JWT from localStorage
+				}));
 
 				if (callInitiatedFromHome) {
 					setIsCalling(true);
@@ -454,6 +467,7 @@ export default function CallPage() {
 
 			ws.onmessage = (msg) => handleSignalingMessage(msg.data);
 			ws.onerror = (e) => console.error("WebSocket error", e);
+			ws.onclose = () => console.log("CallPage WebSocket disconnected");
 		};
 
 		init();
@@ -473,7 +487,6 @@ export default function CallPage() {
 		navigate("/");
 	};
 
-	// ---- Resolution change ----
 	const handleResolutionChange = async (newRes) => {
 		setResolution(newRes);
 		const { stream: newStream, error: streamError } = await requestMediaStream(newRes);
@@ -486,13 +499,13 @@ export default function CallPage() {
 			const videoSender = pc.getSenders().find(s => s.track?.kind === "video");
 			if (videoSender && newVideoTrack) await videoSender.replaceTrack(newVideoTrack);
 
-			const oldAudioTrack = localStreamRef.current.getAudioTracks()[0];
 			if (localVideoRef.current) {
 				localVideoRef.current.srcObject = new MediaStream(
 					[...localVideoRef.current.srcObject.getTracks().filter(t => t.kind !== "video"), newVideoTrack]
 				);
 			}
 			oldVideoTrack.stop();
+			const oldAudioTrack = localStreamRef.current.getAudioTracks()[0];
 			localStreamRef.current = new MediaStream([newVideoTrack, oldAudioTrack]);
 		} else {
 			localStreamRef.current = newStream;
@@ -514,7 +527,6 @@ export default function CallPage() {
 		if (track) { track.enabled = !track.enabled; setIsAudioOn(track.enabled); }
 	};
 
-
 	const StatsPanel = ({ compact = false }) => (
 		<div className={`bg-black/80 backdrop-blur rounded-lg text-green-300 font-mono ${compact ? "text-xs p-2 grid grid-cols-2 gap-x-3 gap-y-0.5" : "text-xs p-3 space-y-0.5"}`}>
 			<div>⬇ {liveStats.downloadBitrate} kBps</div>
@@ -534,11 +546,8 @@ export default function CallPage() {
 			<h3 className="text-xs font-semibold text-gray-300 mb-3 uppercase tracking-wider">Video Quality</h3>
 			<div className="space-y-1.5">
 				{Object.entries(RESOLUTIONS).map(([key, value]) => (
-					<button
-						key={key}
-						onClick={() => handleResolutionChange(key)}
-						className={`w-full px-3 py-2 rounded-lg text-left text-xs transition ${resolution === key ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}
-					>
+					<button key={key} onClick={() => handleResolutionChange(key)}
+						className={`w-full px-3 py-2 rounded-lg text-left text-xs transition ${resolution === key ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}>
 						<div className="font-medium">{value.label}</div>
 						<div className="opacity-60">{value.width} × {value.height}</div>
 					</button>
@@ -548,7 +557,6 @@ export default function CallPage() {
 		</div>
 	);
 
-	// ---- End call notification overlay (shared) ----
 	const EndCallOverlay = () => (
 		<div className="absolute inset-0 flex items-center justify-center z-50 bg-black/50 backdrop-blur-sm">
 			<div className="bg-gray-900 border-2 border-red-500 text-white px-8 py-6 rounded-2xl shadow-2xl text-center">
@@ -560,46 +568,26 @@ export default function CallPage() {
 		</div>
 	);
 
-	// ---- CALLING overlay ----
 	const CallingOverlay = () => (
 		<div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 backdrop-blur-sm">
 			<div className="w-16 h-16 rounded-full border-4 border-blue-500 border-t-transparent animate-spin mb-6" />
 			<p className="text-white text-lg font-medium mb-6">Calling {contact?.userName}…</p>
-			<button onClick={cancelCalling} className="px-5 py-2 rounded-full bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition">
-				Cancel
-			</button>
+			<button onClick={cancelCalling} className="px-5 py-2 rounded-full bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition">Cancel</button>
 		</div>
 	);
 
-
 	return (
 		<div className="fixed inset-0 bg-black text-white overflow-hidden" onClick={showControls}>
+			<video ref={remoteVideoRef} autoPlay playsInline className="absolute inset-0 w-full h-full object-contain" />
 
-
-			<video
-				ref={remoteVideoRef}
-				autoPlay
-				playsInline
-				className="absolute inset-0 w-full h-full object-contain"
-			/>
-
-			{/* Waiting placeholder */}
 			{!hasRemoteStream && (
 				<div className="absolute inset-0 flex items-center justify-center pointer-events-none">
 					<p className="text-gray-400 text-base">Waiting for {contact?.userName}…</p>
 				</div>
 			)}
 
-			{/* ── LOCAL VIDEO (picture-in-picture, top-right) ── */}
 			<div className="absolute top-3 right-3 w-28 h-20 sm:w-36 sm:h-28 lg:w-44 lg:h-32 rounded-xl overflow-hidden border border-gray-600 shadow-2xl z-10">
-				<video
-					ref={localVideoRef}
-					autoPlay
-					playsInline
-					muted
-					className="w-full h-full object-cover"
-					style={{ transform: "scaleX(-1)" }}
-				/>
+				<video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" style={{ transform: "scaleX(-1)" }} />
 				{!isVideoOn && (
 					<div className="absolute inset-0 bg-gray-900 flex items-center justify-center">
 						<span className="text-3xl">👤</span>
@@ -610,88 +598,46 @@ export default function CallPage() {
 				</div>
 			</div>
 
-			<button
-				onClick={(e) => { e.stopPropagation(); setShowStats(s => !s); showControls(); }}
-				className={`absolute top-3 left-3 z-20 px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${showStats ? "bg-green-700 text-white" : "bg-black/60 text-green-400 hover:bg-black/80"}`}
-			>
+			<button onClick={(e) => { e.stopPropagation(); setShowStats(s => !s); showControls(); }}
+				className={`absolute top-3 left-3 z-20 px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${showStats ? "bg-green-700 text-white" : "bg-black/60 text-green-400 hover:bg-black/80"}`}>
 				📊 Stats
 			</button>
 
-			{/* ── STATS PANEL (top-left, below button) ── */}
 			{showStats && (
 				<div className="absolute top-12 left-3 z-20 max-w-xs" onClick={e => e.stopPropagation()}>
 					<StatsPanel compact={false} />
 				</div>
 			)}
 
-			{/* ── ERROR ── */}
 			{showError && error && (
-				<div className="absolute top-14 left-3 z-20 bg-red-700/90 text-white px-4 py-2 rounded-lg text-sm shadow-lg max-w-xs">
-					{error}
-				</div>
+				<div className="absolute top-14 left-3 z-20 bg-red-700/90 text-white px-4 py-2 rounded-lg text-sm shadow-lg max-w-xs">{error}</div>
 			)}
 
-			{/* ── SETTINGS PANEL ── */}
 			{showSettings && (
-				<div
-					className="absolute bottom-24 left-1/2 -translate-x-1/2 z-30"
-					onClick={e => e.stopPropagation()}
-				>
+				<div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-30" onClick={e => e.stopPropagation()}>
 					<SettingsPanel />
 				</div>
 			)}
 
-			{/* ── BOTTOM CONTROLS BAR ── */}
-
-			<div
-				className={`
-					absolute bottom-0 left-0 right-0 z-20
-					flex items-center justify-center gap-3 sm:gap-4
-					px-4 py-4 sm:py-5
-					bg-gradient-to-t from-black/80 to-transparent
-					transition-opacity duration-300
-					md:opacity-100
-					${controlsVisible ? "opacity-100" : "opacity-0 pointer-events-none"}
-				`}
-				onClick={e => e.stopPropagation()}
-			>
-				{/* Mic */}
-				<button
-					onClick={toggleAudio}
-					className={`p-3 sm:p-3.5 rounded-full transition shadow-lg ${isAudioOn ? "bg-gray-700/90 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"}`}
-					title={isAudioOn ? "Mute" : "Unmute"}
-				>
+			<div className={`absolute bottom-0 left-0 right-0 z-20 flex items-center justify-center gap-3 sm:gap-4 px-4 py-4 sm:py-5 bg-gradient-to-t from-black/80 to-transparent transition-opacity duration-300 md:opacity-100 ${controlsVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+				onClick={e => e.stopPropagation()}>
+				<button onClick={toggleAudio}
+					className={`p-3 sm:p-3.5 rounded-full transition shadow-lg ${isAudioOn ? "bg-gray-700/90 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"}`}>
 					{isAudioOn ? <FiMic size={20} /> : <FiMicOff size={20} />}
 				</button>
-
-				{/* Camera */}
-				<button
-					onClick={toggleVideo}
-					className={`p-3 sm:p-3.5 rounded-full transition shadow-lg ${isVideoOn ? "bg-gray-700/90 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"}`}
-					title={isVideoOn ? "Turn off camera" : "Turn on camera"}
-				>
+				<button onClick={toggleVideo}
+					className={`p-3 sm:p-3.5 rounded-full transition shadow-lg ${isVideoOn ? "bg-gray-700/90 hover:bg-gray-600" : "bg-red-600 hover:bg-red-700"}`}>
 					{isVideoOn ? <FiCamera size={20} /> : <FiCameraOff size={20} />}
 				</button>
-
-				{/* End Call */}
-				<button
-					onClick={handleEndCall}
-					className="px-5 sm:px-7 py-3 sm:py-3.5 bg-red-600 hover:bg-red-700 rounded-full font-semibold shadow-lg flex items-center gap-2 transition"
-				>
+				<button onClick={handleEndCall} className="px-5 sm:px-7 py-3 sm:py-3.5 bg-red-600 hover:bg-red-700 rounded-full font-semibold shadow-lg flex items-center gap-2 transition">
 					<FiPhoneCall size={18} />
 					<span className="text-sm hidden sm:inline">End Call</span>
 				</button>
-
-				{/* Settings */}
-				<button
-					onClick={() => setShowSettings(s => !s)}
-					className={`p-3 sm:p-3.5 rounded-full transition shadow-lg ${showSettings ? "bg-blue-600 hover:bg-blue-700" : "bg-gray-700/90 hover:bg-gray-600"}`}
-					title="Settings"
-				>
+				<button onClick={() => setShowSettings(s => !s)}
+					className={`p-3 sm:p-3.5 rounded-full transition shadow-lg ${showSettings ? "bg-blue-600 hover:bg-blue-700" : "bg-gray-700/90 hover:bg-gray-600"}`}>
 					<FiSettings size={20} />
 				</button>
 			</div>
-
 
 			{!controlsVisible && (
 				<div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 md:hidden">
@@ -699,7 +645,6 @@ export default function CallPage() {
 				</div>
 			)}
 
-			{/* ── OVERLAYS ── */}
 			{isCalling && <CallingOverlay />}
 			{showEndCallNotification && <EndCallOverlay />}
 		</div>
