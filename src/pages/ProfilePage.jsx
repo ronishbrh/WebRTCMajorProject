@@ -26,20 +26,20 @@ export default function ProfilePage() {
   const qrRef = useRef();
 
   useEffect(() => {
-    if (!identity) return;
+    if (!identityManager) return;
 
     const load = async () => {
       setSignalingServers(identityManager.getSignallingServers());
     };
 
     load();
-  }, [identity]);
+  }, [identityManager]);
 
 
   const buildQRData = () => {
     const data = JSON.stringify({
       t: "c",
-      n: identity?.userName,
+      n: identityManager?.getUserName(),
       k: pubKey,
       s: signalingServers
     });
