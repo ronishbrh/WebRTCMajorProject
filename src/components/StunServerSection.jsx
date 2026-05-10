@@ -3,7 +3,7 @@ import { useUser } from "../utils/UserContext";
 
 
 export default function StunServerSection() {
-    const { identitiyManager } = useUser()
+    const { identityManager} = useUser()
 
     const [servers, setServers] = useState([]);
     const [input, setInput] = useState("");
@@ -111,7 +111,7 @@ export default function StunServerSection() {
 
         const loadServers = async () => {
 
-            if (!identitiyManager) return;
+            if (!identityManager) return;
 
             let stored = await identityManager.getStunServers();
 
@@ -131,7 +131,7 @@ export default function StunServerSection() {
 
         loadServers();
 
-    }, [identitiyManager]);
+    }, [identityManager]);
 
     return (
         <div>

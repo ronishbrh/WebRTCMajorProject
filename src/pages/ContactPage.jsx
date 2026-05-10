@@ -24,9 +24,7 @@ export default function ContactPage() {
     const [message, setMessage] = useState("");
     const [messageType, setMessageType] = useState("");
 
-
     const qrScannerRef = useRef(null);
-
 
     useEffect(() => {
         if (editMode && existingContact) {

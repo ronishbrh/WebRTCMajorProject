@@ -4,6 +4,7 @@ import Navbar from "../components/Navbar.jsx";
 import UserCard from "../components/UserCard";
 import { useUser } from "../utils/UserContext";
 import { SocketManager } from "../utils/UserContext";
+import { AuthClient } from "../utils/AuthClient.js";
 
 
 function toWss(url) {
@@ -61,145 +62,153 @@ export default function HomePage() {
 
 		console.log("Connecting to signaling servers:");
 
-		const servers = identityManager.getSignallingServers();
 
-		console.log("servers:", servers);
 
 		let unsubscribers = [];
 
-		if (!allServerConnected) {
-			for (const server of servers) {
+		const run = async () => {
+			const servers = identityManager.getSignallingServers();
+			console.log("servers:", servers);
+			if (!allServerConnected) {
+				for (const server of servers) {
 
-				if (!server.registered) {
-					continue;
-				}
+					const client = new AuthClient(server.url, identityManager);
+					let token;
 
-				const token = localStorage.getItem(`token_${toHttp(server.url)}`);
+					try {
+						token = await client.getValidToken();
+						await identityManager.registerSignallingServerAccess(server.url);
+						console.log("Got token");
+					} catch (err) {
+						console.log("Couldn't get token at homepage", err);
+						continue;
+					}
 
-				if (!token) {
-					continue;
-				}
+					if (!token) {
+						continue;
+					}
 
-				const ws = new WebSocket(server.url); //also handle the token part later
-				//ws.send(JSON.stringify({
-				//  type: "register",
-				//  userName: identity.userName,
-				//  publicKey: publicKeyBase64,
-				//  token,
-				//}));
+					const ws = new WebSocket(server.url); //also handle the token part later
+					//ws.send(JSON.stringify({
+					//  type: "register",
+					//  userName: identity.userName,
+					//  publicKey: publicKeyBase64,
+					//  token,
+					//}));
 
-				ws.onopen = () => {
-					console.log("WebSocket connected");
-					ws.send(
-						JSON.stringify({
-							type: "register",
-							userName: identityManager.getUserName(),
-							token,
-						})
-					);
-
-					console.log("User registered on signaling server");
-				}
-
-				ws.onerror = (err) => {
-					console.error("WebSocket error:", err);
-				};
-
-				ws.onclose = () => {
-					console.log("WebSocket disconnected");
-				};
-
-				const sm = new SocketManager(ws);
-
-				let unsubscriber = sm.subscribe("call-request", (data) => {
-					const contact = contactsRef.current.find(
-						(c) => c.userName === data.from
-					);
-
-					if (!contact || !contact.signallingServers.includes(server.url)) {
-						console.error("Call from unknown contact:", data.from);
-
+					ws.onopen = () => {
+						console.log("WebSocket connected");
 						ws.send(
 							JSON.stringify({
-								type: "call-declined",
-								from: identityManager.getUserName(),
-								to: data.from,
+								type: "register",
+								publicKey: identityManager.getPublicKey(),
+								token,
 							})
 						);
 
-						return;
+						console.log("User registered on signaling server");
 					}
 
-					if (incomingCall) { // if there is already a incoming call, reject new incoming call
-						ws.send(
-							JSON.stringify({
-								type: "call-declined",
-								from: identityManager.getUserName(),
-								to: data.from,
-							})
+					ws.onerror = (err) => {
+						console.error("WebSocket error:", err);
+					};
+
+					ws.onclose = () => {
+						console.log("WebSocket disconnected");
+					};
+
+					const sm = new SocketManager(ws);
+
+					let unsubscriber = sm.subscribe("call-request", (data) => {
+						const contact = contactsRef.current.find(
+							(c) => c.publicKey === data.from
 						);
-					}
 
-					setIncomingCall({ from: data.from, contact, server: server.url });
-					incomingCallRef.current = { from: data.from, contact, server: server.url };
-					console.log("Set from data", incomingCall);
-					console.log("Call request received at ", Date.now());
-				});
+						if (!contact || !contact.signallingServers.includes(server.url)) {
+							console.error("Call from unknown contact:", data.from);
 
-				unsubscribers.push(unsubscriber);
+							ws.send(
+								JSON.stringify({
+									type: "call-declined",
+									from: identityManager.getPublicKey(),
+									to: data.from,
+								})
+							);
 
-				unsubscriber = sm.subscribe("call-cancelled", (data) => {
-					if (incomingCallRef.current.from === data.from) {
-						setIncomingCall(null);
-						incomingCallRef.current = null;
-						alert(`${data.from} cancelled the call`);
-					}
-				});
+							return;
+						}
 
-				unsubscribers.push(unsubscriber);
+						if (incomingCall) { // if there is already a incoming call, reject new incoming call
+							ws.send(
+								JSON.stringify({
+									type: "call-declined",
+									from: identityManager.getPublicKey(),
+									to: data.from,
+								})
+							);
+						}
 
-				unsubscriber = sm.subscribe("call-declined", (data) => {
-					clearTimeout(callTimeoutRef.current);
-					setOutgoingCall(null);
-					outgoingCallRef.current = null;
-					alert(`${data.from} declined your call.`);
-				});
-
-				unsubscribers.push(unsubscriber);
-
-				unsubscriber = sm.subscribe("call-accepted", (data) => {
-					console.log("HomePage: call-accepted received, closing WS then navigating");
-					clearTimeout(callTimeoutRef.current);
-					const oc = outgoingCallRef.current;
-					if (!oc) return;
-					setOutgoingCall(null);
-					outgoingCallRef.current = null;
-
-					navigate(`/call/${oc.contact.userName}`, {
-						state: {
-							contact: oc.contact,
-							callInitiated: true,
-							callAlreadyAccepted: true,
-							signallingServer: oc.server,
-						},
+						setIncomingCall({ from: data.from, contact, server: server.url });
+						incomingCallRef.current = { from: data.from, contact, server: server.url };
+						console.log("Set from data", incomingCallRef.current);
+						console.log("Call request received at ", Date.now());
 					});
-				});
 
-				unsubscribers.push(unsubscriber);
+					unsubscribers.push(unsubscriber);
 
-				unsubscriber = sm.subscribe("error", (data) => {
-					localStorage.removeItem(`token_${toHttp(server.url)}`);
-					removeSocket(server.url);
-					console.error("Server error:", data.message || data);
-				});
+					unsubscriber = sm.subscribe("call-cancelled", (data) => {
+						if (incomingCallRef.current.from === data.from) {
+							setIncomingCall(null);
+							incomingCallRef.current = null;
+							alert(`${data.from} cancelled the call`);
+						}
+					});
 
-				unsubscribers.push(unsubscriber);
+					unsubscribers.push(unsubscriber);
 
-				addSocket(server.url, sm);
+					unsubscriber = sm.subscribe("call-declined", (data) => {
+						clearTimeout(callTimeoutRef.current);
+						setOutgoingCall(null);
+						outgoingCallRef.current = null;
+						alert(`${data.from} declined your call.`);
+					});
+
+					unsubscribers.push(unsubscriber);
+
+					unsubscriber = sm.subscribe("call-accepted", (data) => {
+						console.log("HomePage: call-accepted received, closing WS then navigating");
+						clearTimeout(callTimeoutRef.current);
+						const oc = outgoingCallRef.current;
+						if (!oc) return;
+						setOutgoingCall(null);
+						outgoingCallRef.current = null;
+
+						navigate(`/call/${oc.contact.userName}`, {
+							state: {
+								contact: oc.contact,
+								callInitiated: true,
+								callAlreadyAccepted: true,
+								signallingServer: oc.server,
+							},
+						});
+					});
+
+					unsubscribers.push(unsubscriber);
+
+					unsubscriber = sm.subscribe("error", async (data) => {
+						await identityManager.clearSignallingServerTokens(server.url);
+						removeSocket(server.url);
+						console.error("Server error:", data.message || data);
+					});
+
+					unsubscribers.push(unsubscriber);
+
+					addSocket(server.url, sm);
+				}
+				setAllServerConnected(true);
 			}
-			setAllServerConnected(true);
-		}
-
+		};
+		run();
 		return () => {
 			console.log("HomePage unmounted");
 			unsubscribers.forEach((unsubsriber) => { unsubsriber() });
@@ -228,14 +237,14 @@ export default function HomePage() {
 
 			getSocket(serverToUse).send({
 				type: "call-request",
-				from: identityManager.getUserName(),
-				to: contact.userName,
+				from: identityManager.getPublicKey(),
+				to: contact.publicKey,
 			});
 
 			// Timeout if no answer
 			callTimeoutRef.current = setTimeout(() => {
 				if (outgoingCallRef.current) {
-					getSocket(serverToUse).send({ type: "call-cancelled", from: identityManager.getUserName(), to: contact.userName });
+					getSocket(serverToUse).send({ type: "call-cancelled", from: identityManager.getPublicKey(), to: contact.publicKey });
 					setOutgoingCall(null);
 					outgoingCallRef.current = null;
 					alert(`${contact.userName} didn't answer.`);
@@ -252,7 +261,7 @@ export default function HomePage() {
 	const cancelOutgoing = () => {
 		clearTimeout(callTimeoutRef.current);
 		const oc = outgoingCallRef.current;
-		getSocket(oc.server).send({ type: "call-cancelled", from: identityManager.getUserName(), to: oc.contact.userName });
+		getSocket(oc.server).send({ type: "call-cancelled", from: identityManager.getPublicKey(), to: oc.contact.publicKey });
 		setOutgoingCall(null);
 		outgoingCallRef.current = null;
 	};
@@ -288,13 +297,13 @@ export default function HomePage() {
 
 			console.log("Accepting call from", incomingCall.from, "using server:", incomingCall.server);
 
-			getSocket(incomingCallRef.server).send({
+			getSocket(incomingCallRef.current.server).send({
 				type: "call-accepted",
-				from: identityManager.getUserName(),
+				from: identityManager.getPublicKey(),
 				to: incomingCall.from,
 			});
 
-			navigate(`/call/${incomingCall.from}`, {
+			navigate(`/call/${incomingCall.contact.userName}`, {
 				state: {
 					contact: incomingCall.contact,
 					incomingCall: true,
@@ -317,7 +326,7 @@ export default function HomePage() {
 		getSocket(incomingCall.server).send(
 			{
 				type: "call-declined",
-				from: identityManager.getUserName(),
+				from: identityManager.getPublicKey(),
 				to: incomingCall.from,
 			}
 		);
@@ -376,7 +385,7 @@ export default function HomePage() {
 			{incomingCall && (
 				<div className="fixed inset-0 bg-black/70 flex flex-col items-center justify-center z-50">
 					<h2 className="text-2xl text-white mb-4">
-						Incoming call from {incomingCall.from}
+						Incoming call from {incomingCall.contact.userName}
 					</h2>
 
 					<div className="flex gap-4">

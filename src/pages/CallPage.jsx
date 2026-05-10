@@ -140,8 +140,8 @@ export default function CallPage() {
 		if (wsRef.current && wsRef.current.ws.readyState === WebSocket.OPEN) {
 			wsRef.current.send({
 				type: "end-call",
-				from: identityManager.getUserName(),
-				to: contact.userName,
+				from: identityManager.getPublicKey(),
+				to: contact.publicKey,
 			});
 		}
 		endCallAndNavigate();
@@ -155,13 +155,13 @@ export default function CallPage() {
 			type: "ice",
 			candidate: arrayBufferToBase64(encrypted),
 			iv: arrayBufferToBase64(iv),
-			from: identityManager.getUserName(),
-			to: contact.userName,
+			from: identityManager.getPublicKey(),
+			to: contact.publicKey,
 		});
 	}
 
 	function startHandshake() {
-		wsRef.current.send({ type: "join", from: identityManager.getUserName(), to: contact.userName });
+		wsRef.current.send({ type: "join", from: identityManager.getPublicKey(), to: contact.publicKey });
 	}
 
 	useEffect(() => {
@@ -253,8 +253,8 @@ export default function CallPage() {
 					type: "challenge1",
 					publicKey: arrayBufferToBase64(rawPubKey),
 					signature: arrayBufferToBase64(signature),
-					from: identityManager.getUserName(),
-					to: contact.userName,
+					from: identityManager.getPublicKey(),
+					to: contact.publicKey,
 				});
 			});
 
@@ -274,8 +274,8 @@ export default function CallPage() {
 						type: "challenge2",
 						publicKey: arrayBufferToBase64(rawPubKey),
 						signature: arrayBufferToBase64(sig),
-						from: identityManager.getUserName(),
-						to: contact.userName,
+						from: identityManager.getPublicKey(),
+						to: contact.publicKey,
 					});
 
 					const publicKey = await crypto.subtle.importKey("raw", rawECDH, { name: "ECDH", namedCurve: "P-256" }, true, []);
@@ -324,8 +324,8 @@ export default function CallPage() {
 						type: "offer",
 						offer: arrayBufferToBase64(encrypted),
 						iv: arrayBufferToBase64(iv),
-						from: identityManager.getUserName(),
-						to: contact.userName,
+						from: identityManager.getPublicKey(),
+						to: contact.publicKey,
 					});
 				} else {
 					console.error("Unverified signature in challenge2");
@@ -354,8 +354,8 @@ export default function CallPage() {
 					type: "answer",
 					answer: arrayBufferToBase64(encAns),
 					iv: arrayBufferToBase64(ansiv),
-					from: identityManager.getUserName(),
-					to: contact.userName,
+					from: identityManager.getPublicKey(),
+					to: contact.publicKey,
 				});
 			});
 

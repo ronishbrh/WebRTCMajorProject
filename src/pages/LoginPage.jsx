@@ -33,7 +33,7 @@ export default function Login({ onUnlocked }) {
 			onUnlocked(identityManager);
 		} catch (err) {
 			console.log(err);
-			setError("Unable to create user. Choose a different username.");
+			setError(`Unable to create user. Choose a different username. ${err}`);
 		}
 	};
 
