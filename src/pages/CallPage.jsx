@@ -203,7 +203,7 @@ export default function CallPage() {
 			// const pc = new RTCPeerConnection(iceServersConfig);
 			const pc = new RTCPeerConnection({
 				...iceServersConfig,
-				iceTransportPolicy: "relay"
+				iceTransportPolicy: "all"
 			});
 			pcRef.current = pc;
 
