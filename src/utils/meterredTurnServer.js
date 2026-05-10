@@ -60,17 +60,22 @@ export async function getIceServersConfig(additionalTurnServers = []) {
 
   // Build RTCPeerConnection config
   const config = {
-  iceServers: [
-    {
-      urls: ['stun:stun.l.google.com:19302']
-    },
-    ...allTurnServers.map(server => ({
-      urls: Array.isArray(server.urls) ? server.urls : [server.urls],
-      username: server.username || undefined,
-      credential: server.password || undefined
-    }))
-  ]
-};
+    iceServers: [
+      {
+        urls: ['stun:stun.l.google.com:19302']
+      },
+      ...allTurnServers
+        .filter(server => server && (server.urls || server.url))
+        .map(server => ({
+          urls: server.urls
+            ? (Array.isArray(server.urls) ? server.urls : [server.urls])
+            : [server.url],   // fallback for old format
+
+          username: server.username || undefined,
+          credential: server.password || server.credential || undefined
+        }))
+    ]
+  };
 
   console.log('ICE Servers Config:', {
     stunServers: config.iceServers[0].urls.length,
