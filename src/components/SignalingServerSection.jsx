@@ -392,7 +392,7 @@ export default function SignalingServerSection() {
 						disabled={addingServer || !newServerURL.trim()}
 						className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white rounded-lg flex items-center gap-2 transition text-sm"
 					>
-						<FiPlus size={16} />
+						<FiPlus size={12} />
 						{addingServer ? "Adding…" : "Add"}
 					</button>
 				</div>
