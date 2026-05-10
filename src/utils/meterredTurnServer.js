@@ -38,7 +38,7 @@ export async function getMeterredTurnServers() {
 
     // Convert Metered format to our internal format
     return data.iceServers.map(server => ({
-      url: typeof server.urls === 'string' ? server.urls : server.urls,
+      url: typeof server.urls === 'string' ? server.urls : server.urls[0],
       username: server.username || '',
       password: server.credential || '',
       timestamp: new Date().toISOString(),
@@ -61,19 +61,22 @@ export async function getIceServersConfig(additionalTurnServers = []) {
   // Build RTCPeerConnection config
   const config = {
     iceServers: [
+      // STUN servers (free, unlimited, no authentication)
       {
-        urls: ['stun:stun.l.google.com:19302']
+        urls: [
+          'stun:stun.l.google.com:19302',
+          'stun:stun1.l.google.com:19302',
+          'stun:stun2.l.google.com:19302',
+          'stun:stun3.l.google.com:19302',
+          'stun:stun4.l.google.com:19302',
+        ]
       },
-      ...allTurnServers
-        .filter(server => server && (server.urls || server.url))
-        .map(server => ({
-          urls: server.urls
-            ? (Array.isArray(server.urls) ? server.urls : [server.urls])
-            : [server.url],   // fallback for old format
-
-          username: server.username || undefined,
-          credential: server.password || server.credential || undefined
-        }))
+      // TURN servers (Metered free + manually added)
+      ...allTurnServers.map(server => ({
+        urls: [server.url],
+        username: server.username || undefined,
+        credential: server.password || undefined
+      }))
     ]
   };
 

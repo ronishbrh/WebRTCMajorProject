@@ -1,116 +1,103 @@
-import { createContext, useContext, useState, useRef } from "react";
+import { createContext, useContext, useState, useRef, useCallback } from "react";
 
 const UserContext = createContext(null);
 
+// ─── SocketManager ────────────────────────────────────────────────────────────
+export class SocketManager {
+  constructor(ws) {
+    this.ws = ws;
+    this.listeners = new Map();
+
+    ws.onmessage = (event) => {
+      let data;
+      try { data = JSON.parse(event.data); } catch (e) { return; }
+      console.log("[WS] Received:", data.type);
+      const handler = this.listeners.get(data.type);
+      if (handler) handler(data);
+      else console.warn("[WS] No handler for:", data.type);
+    };
+  }
+
+  // Always overwrite — allows re-subscription after remount
+  subscribe(type, handler) {
+    this.listeners.set(type, handler);
+    return () => this.listeners.delete(type);
+  }
+
+  send(data) {
+    if (this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(data));
+    } else {
+      console.error("[WS] Cannot send — readyState:", this.ws.readyState);
+    }
+  }
+
+  isOpen() {
+    return this.ws.readyState === WebSocket.OPEN;
+  }
+
+  close() {
+    this.ws.close();
+  }
+}
+
+// ─── Provider ─────────────────────────────────────────────────────────────────
 export function UserProvider({ children }) {
-	const [identityManager, setIdentityManager] = useState(null);
-	const [allServerConnected, setAllServerConnected] = useState(false);
+  const [identityManager, _setIdentityManager] = useState(null);
 
-	// Map<string, WebSocket>
-	const socketsRef = useRef(new Map());
+  // Keep a ref in sync with state so consumers can read the latest value
+  // synchronously without triggering re-renders
+  const identityManagerRef = useRef(null);
 
-	const addSocket = (key, socket) => {
-		socketsRef.current.set(key, socket);
-		console.log(`inserted key : ${key}, value : ${socket}`);
-	};
+  // Wrap setter so we only trigger a re-render when the value actually changes
+  const setIdentityManager = useCallback((im) => {
+    if (im === identityManagerRef.current) return; // no-op if same instance
+    identityManagerRef.current = im;
+    _setIdentityManager(im);
+  }, []);
 
-	const getSocket = (key) => {
-		console.log(`total inputs: ${socketsRef.current.size}`);
-		console.log(`getting key : ${key}`);
-		return socketsRef.current.get(key);
-	};
+  const socketsRef = useRef(new Map());
 
-	const removeSocket = (key) => {
-		const socket = socketsRef.current.get(key);
+  const addSocket = (key, socket) => {
+    socketsRef.current.set(key, socket);
+    console.log("[Socket] Added:", key);
+    console.log("[Socket] All keys:", [...socketsRef.current.keys()]);
+  };
 
-		if (socket) {
-			socket.close();
-			socketsRef.current.delete(key);
-		}
-	};
+  const getSocket = (key) => {
+    const s = socketsRef.current.get(key);
+    console.log("[Socket] Get:", key, "=>", s ? "FOUND" : "NOT FOUND");
+    console.log("[Socket] All keys:", [...socketsRef.current.keys()]);
+    return s;
+  };
 
-	const closeAllSockets = () => {
-		socketsRef.current.forEach((socket) => {
-			socket.close();
-		});
+  const listSockets = () => [...socketsRef.current.keys()];
 
-		socketsRef.current.clear();
-		setAllServerConnected(false);
-	};
+  const removeSocket = (key) => {
+    const s = socketsRef.current.get(key);
+    if (s) { s.close(); socketsRef.current.delete(key); }
+  };
 
-	const closeAllSocketsExcept = (key) => {
-		const socket = getSocket(key);
+  const closeAllSockets = () => {
+    socketsRef.current.forEach((s) => s.close());
+    socketsRef.current.clear();
+  };
 
-		if (socket) {
-			socketsRef.current.delete(key);
-
-			closeAllSockets();
-
-			addSocket(key, socket);
-		}
-	};
-
-	return (
-		<UserContext.Provider
-			value={{
-				identityManager,
-				setIdentityManager,
-
-				sockets: socketsRef.current,
-				addSocket,
-				getSocket,
-				removeSocket,
-				closeAllSockets,
-				closeAllSocketsExcept,
-				allServerConnected,
-				setAllServerConnected
-			}}
-		>
-			{children}
-		</UserContext.Provider>
-	);
+  return (
+    <UserContext.Provider value={{
+      identityManager,
+      setIdentityManager,
+      addSocket,
+      getSocket,
+      listSockets,
+      removeSocket,
+      closeAllSockets,
+    }}>
+      {children}
+    </UserContext.Provider>
+  );
 }
 
 export function useUser() {
-	return useContext(UserContext);
-}
-
-
-export class SocketManager {
-	constructor(ws) {
-		this.ws = ws;
-		this.listeners = new Map();
-
-		ws.onmessage = (event) => {
-			const data = JSON.parse(event.data);
-
-			console.log("Msg received:", data.type);
-			const handler = this.listeners.get(data.type);
-
-			if (handler) {
-				handler(data);
-			} else {
-				console.error("Msg wasn't handled:", data.type);
-			}
-				
-		};
-	}
-
-	subscribe(type, handler) {
-		if (!this.listeners.has(type)) {
-			this.listeners.set(type, handler);
-		}
-
-		return () => {
-			this.listeners.delete(type);
-		};
-	}
-
-	close() {
-		this.ws.close();
-	}
-
-	send(data) {
-		this.ws.send(JSON.stringify(data));
-	}
+  return useContext(UserContext);
 }

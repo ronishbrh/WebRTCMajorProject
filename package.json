@@ -13,6 +13,7 @@
     "@tailwindcss/vite": "^4.1.17",
     "@zxing/browser": "^0.2.0",
     "html5-qrcode": "^2.3.8",
+    "jsqr": "^1.4.0",
     "lucide-react": "^0.562.0",
     "pako": "^2.1.0",
     "qr-scanner": "^1.4.2",
