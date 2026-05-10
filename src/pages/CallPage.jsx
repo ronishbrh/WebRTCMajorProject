@@ -200,7 +200,11 @@ export default function CallPage() {
 			const customStun = localStorage.getItem("activeStun") || "stun:stun.l.google.com:19302";
 			iceServersConfig.iceServers.unshift({ urls: [customStun] });
 
-			const pc = new RTCPeerConnection(iceServersConfig);
+			// const pc = new RTCPeerConnection(iceServersConfig);
+			const pc = new RTCPeerConnection({
+				...iceServersConfig,
+				iceTransportPolicy: "relay"
+			});
 			pcRef.current = pc;
 
 			stream.getTracks().forEach(track => pc.addTrack(track, stream));
