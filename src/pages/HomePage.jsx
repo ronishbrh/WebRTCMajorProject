@@ -3,8 +3,8 @@ import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar.jsx";
 import UserCard from "../components/UserCard";
 import { useUser, SocketManager } from "../utils/UserContext";
+import { AuthClient } from "../utils/AuthClient";
 
-// Map key: always https:// — used to look up sockets in the Map
 function toHttpKey(url) {
   if (!url) return url;
   return url
@@ -13,7 +13,7 @@ function toHttpKey(url) {
     .replace(/\/$/, "");
 }
 
-// Actual WebSocket URL: always wss:// or ws://
+
 function toWsUrl(url) {
   if (!url) return url;
   return url
@@ -44,40 +44,44 @@ export default function HomePage() {
     console.log("[HomePage] Contacts loaded:", list.length);
   }, [identityManager]);
 
-  useEffect(() => {
-    if (!identityManager) return;
+ useEffect(() => {
+  if (!identityManager) return;
 
-    const servers     = identityManager.getSignallingServers();
-    const myPublicKey = identityManager.getPublicKey();
-    const unsubscribers = [];
+  const servers     = identityManager.getSignallingServers();
+  const myPublicKey = identityManager.getPublicKey();
+  const unsubscribers = [];
+  let cancelled = false;
 
-    console.log("[HomePage] Setting up signalling servers:", servers);
-
+  const setup = async () => {
     for (const server of servers) {
-      if (!server.registered) continue;
+      if (cancelled) break;
+
+      //servers that have been approved/registered
+      const authClient = new AuthClient(server.url, identityManager);
+      let token;
+
+      try {
+        token = await authClient.getValidToken();
+      } catch (err) {
+        console.warn("[HomePage] Auth failed for:", server.url, err.message);
+        continue;
+      }
+
+      if (!token) {
+        console.warn("[HomePage] No valid token for:", server.url, "— needs access approval");
+        continue;
+      }
+
+      if (cancelled) break;
 
       const key   = toHttpKey(server.url);
       const wsUrl = toWsUrl(server.url);
 
-      // Try all possible token key formats
-      const token =
-        localStorage.getItem(`token_${key}`) ||
-        localStorage.getItem(`token_${wsUrl}`) ||
-        localStorage.getItem(`token_${server.url}`);
-
-      if (!token) {
-        console.warn("[HomePage] No token found for server:", key);
-        console.warn("[HomePage] localStorage token keys:", Object.keys(localStorage).filter(k => k.startsWith("token_")));
-        continue;
-      }
-
       let sm = getSocket(key);
 
       if (sm && sm.isOpen()) {
-      
-        console.log("[HomePage] Reusing open socket, re-attaching handlers for:", key);
+        console.log("[HomePage] Reusing open socket for:", key);
       } else {
-       
         console.log("[HomePage] Opening new WebSocket:", wsUrl);
         const ws = new WebSocket(wsUrl);
 
@@ -92,8 +96,9 @@ export default function HomePage() {
         addSocket(key, sm);
       }
 
+      // ── Attach handlers ──────────────────────────────────────────────
       unsubscribers.push(sm.subscribe("registered", (data) => {
-        console.log("[HomePage] Successfully registered on server:", data.publicKey?.slice(0, 20));
+        console.log("[HomePage] Registered on:", server.url, data.publicKey?.slice(0, 20));
       }));
 
       unsubscribers.push(sm.subscribe("call-request", (data) => {
@@ -101,13 +106,12 @@ export default function HomePage() {
         const contact = contactsRef.current.find(c => c.publicKey === data.from);
 
         if (!contact) {
-          console.warn("[HomePage] Call from unknown contact, declining");
+          console.warn("[HomePage] Unknown caller, declining");
           sm.send({ type: "call-declined", from: myPublicKey, to: data.from });
           return;
         }
-
         if (incomingCallRef.current) {
-          console.warn("[HomePage] Already in a call, declining");
+          console.warn("[HomePage] Already in call, declining");
           sm.send({ type: "call-declined", from: myPublicKey, to: data.from });
           return;
         }
@@ -118,7 +122,6 @@ export default function HomePage() {
       }));
 
       unsubscribers.push(sm.subscribe("call-cancelled", (data) => {
-        console.log("[HomePage] call-cancelled from:", data.from?.slice(0, 20));
         if (incomingCallRef.current?.from === data.from) {
           const name = incomingCallRef.current?.contact?.userName ?? data.from;
           setIncomingCall(null);
@@ -128,7 +131,6 @@ export default function HomePage() {
       }));
 
       unsubscribers.push(sm.subscribe("call-declined", (data) => {
-        console.log("[HomePage] call-declined from:", data.from?.slice(0, 20));
         clearTimeout(callTimeoutRef.current);
         const oc = outgoingCallRef.current;
         setOutgoingCall(null);
@@ -137,7 +139,6 @@ export default function HomePage() {
       }));
 
       unsubscribers.push(sm.subscribe("call-accepted", (data) => {
-        console.log("[HomePage] call-accepted, navigating to call page");
         clearTimeout(callTimeoutRef.current);
         const oc = outgoingCallRef.current;
         if (!oc) return;
@@ -156,17 +157,21 @@ export default function HomePage() {
 
       unsubscribers.push(sm.subscribe("error", (data) => {
         console.error("[HomePage] Server error:", data.message);
-        localStorage.removeItem(`token_${key}`);
+
+        authClient.clearTokens();
         removeSocket(key);
       }));
     }
+  };
 
-    return () => {
-      console.log("[HomePage] Unmounting — removing handlers only, keeping sockets alive");
-      unsubscribers.forEach(fn => fn());
-    };
-  }, [identityManager]);
+  setup();
 
+  return () => {
+    cancelled = true;
+    console.log("[HomePage] Unmounting — removing handlers, keeping sockets alive");
+    unsubscribers.forEach(fn => fn());
+  };
+}, [identityManager]);
   // ── Make a call ────────────────────────────────────────────────────────
   const handleCall = (contact) => {
     const rawServer = contact.selectedSignallingServer;
