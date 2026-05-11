@@ -3,31 +3,50 @@ import { createContext, useContext, useState, useRef, useCallback } from "react"
 const UserContext = createContext(null);
 
 // ─── SocketManager ────────────────────────────────────────────────────────────
+
 export class SocketManager {
   constructor(ws) {
-    this.ws = ws;
-    this.listeners = new Map();
+    this.ws       = ws;
+    this.handlers = {}; // type → handler[] (supports multiple subscribers per type)
 
     ws.onmessage = (event) => {
       let data;
-      try { data = JSON.parse(event.data); } catch (e) { return; }
+      try { data = JSON.parse(event.data); } catch { return; }
       console.log("[WS] Received:", data.type);
-      const handler = this.listeners.get(data.type);
-      if (handler) handler(data);
-      else console.warn("[WS] No handler for:", data.type);
+      const fns = this.handlers[data.type];
+      if (fns?.length) {
+        fns.forEach(fn => fn(data));
+      } else {
+        console.warn("[WS] No handler for:", data.type);
+      }
     };
   }
 
+  /**
+   * Returns the raw WebSocket.
+   * Used by CallPage to intercept onclose mid-call.
+   */
+  getSocket() {
+    return this.ws;
+  }
+
+  /**
+   * Subscribe to a message type. Multiple subscribers per type are supported.
+   * Returns an unsubscribe function — call it in useEffect cleanup.
+   */
   subscribe(type, handler) {
-    this.listeners.set(type, handler);
-    return () => this.listeners.delete(type);
+    if (!this.handlers[type]) this.handlers[type] = [];
+    this.handlers[type].push(handler);
+    return () => {
+      this.handlers[type] = this.handlers[type].filter(h => h !== handler);
+    };
   }
 
   send(data) {
     if (this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data));
     } else {
-      console.error("[WS] Cannot send : readyState:", this.ws.readyState);
+      console.error("[WS] Cannot send — readyState:", this.ws.readyState);
     }
   }
 
@@ -41,13 +60,13 @@ export class SocketManager {
 }
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
+
 export function UserProvider({ children }) {
   const [identityManager, _setIdentityManager] = useState(null);
-
   const identityManagerRef = useRef(null);
 
   const setIdentityManager = useCallback((im) => {
-    if (im === identityManagerRef.current) return; 
+    if (im === identityManagerRef.current) return;
     identityManagerRef.current = im;
     _setIdentityManager(im);
   }, []);
@@ -75,7 +94,7 @@ export function UserProvider({ children }) {
   };
 
   const closeAllSockets = () => {
-    socketsRef.current.forEach((s) => s.close());
+    socketsRef.current.forEach(s => s.close());
     socketsRef.current.clear();
   };
 

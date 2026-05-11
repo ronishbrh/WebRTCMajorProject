@@ -5,6 +5,7 @@ import UserCard from "../components/UserCard";
 import { useUser, SocketManager } from "../utils/UserContext";
 import { AuthClient } from "../utils/AuthClient";
 
+// Map key: always https:// — used to look up sockets in the Map
 function toHttpKey(url) {
   if (!url) return url;
   return url
@@ -13,7 +14,7 @@ function toHttpKey(url) {
     .replace(/\/$/, "");
 }
 
-
+// Actual WebSocket URL: always wss:// or ws://
 function toWsUrl(url) {
   if (!url) return url;
   return url
@@ -26,7 +27,7 @@ export default function HomePage() {
   const navigate = useNavigate();
   const { identityManager, addSocket, getSocket, listSockets, removeSocket } = useUser();
 
-  const [contacts, setContacts]         = useState([]);
+  const [contacts,     setContacts]     = useState([]);
   const [incomingCall, setIncomingCall] = useState(null);
   const [outgoingCall, setOutgoingCall] = useState(null);
 
@@ -35,7 +36,7 @@ export default function HomePage() {
   const contactsRef     = useRef([]);
   const callTimeoutRef  = useRef(null);
 
-  // ── Load contacts ──────────────────────────────────────────────────────
+  // ── Load contacts ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!identityManager) { navigate("/login"); return; }
     const list = identityManager.getContacts();
@@ -44,19 +45,17 @@ export default function HomePage() {
     console.log("[HomePage] Contacts loaded:", list.length);
   }, [identityManager]);
 
- useEffect(() => {
-  if (!identityManager) return;
+  // ── Socket setup (one per signalling server, in parallel) ────────────────
+  useEffect(() => {
+    if (!identityManager) return;
 
-  const servers     = identityManager.getSignallingServers();
-  const myPublicKey = identityManager.getPublicKey();
-  const unsubscribers = [];
-  let cancelled = false;
+    const servers     = identityManager.getSignallingServers();
+    const myPublicKey = identityManager.getPublicKey();
+    const unsubscribers = [];
+    let cancelled = false;
 
-  const setup = async () => {
-    for (const server of servers) {
-      if (cancelled) break;
-
-      //servers that have been approved/registered
+    // Each server gets its own isolated async scope — no closure leaks across loop
+    const setupServer = async (server) => {
       const authClient = new AuthClient(server.url, identityManager);
       let token;
 
@@ -64,15 +63,15 @@ export default function HomePage() {
         token = await authClient.getValidToken();
       } catch (err) {
         console.warn("[HomePage] Auth failed for:", server.url, err.message);
-        continue;
+        return;
       }
 
       if (!token) {
         console.warn("[HomePage] No valid token for:", server.url, "— needs access approval");
-        continue;
+        return;
       }
 
-      if (cancelled) break;
+      if (cancelled) return;
 
       const key   = toHttpKey(server.url);
       const wsUrl = toWsUrl(server.url);
@@ -90,32 +89,51 @@ export default function HomePage() {
           ws.send(JSON.stringify({ type: "register", publicKey: myPublicKey, token }));
         };
         ws.onerror = (e) => console.error("[HomePage] WebSocket error:", wsUrl, e);
-        ws.onclose = () => console.log("[HomePage] WebSocket closed:", wsUrl);
+        ws.onclose = (e) => {
+          console.log("[HomePage] WebSocket closed:", wsUrl, e.code, e.reason);
+          // Auto-reconnect after 5s if not deliberately cancelled (e.g. unmount)
+          if (!cancelled) {
+            console.log("[HomePage] Scheduling reconnect in 5s for:", wsUrl);
+            setTimeout(() => {
+              if (!cancelled) setupServer(server);
+            }, 5000);
+          }
+        };
 
         sm = new SocketManager(ws);
         addSocket(key, sm);
       }
 
-      // ── Attach handlers ──────────────────────────────────────────────
+      // ── Keepalive ping — prevents Render.com / idle server from dropping socket ──
+      const pingInterval = setInterval(() => {
+        if (sm.isOpen()) sm.send({ type: "ping", from: myPublicKey });
+      }, 25_000);
+
+      // Register the interval cleanup alongside handler unsubscribers
+      unsubscribers.push(() => clearInterval(pingInterval));
+
+      // ── Event handlers — all closures correctly scoped to this server ────────
+
       unsubscribers.push(sm.subscribe("registered", (data) => {
         console.log("[HomePage] Registered on:", server.url, data.publicKey?.slice(0, 20));
       }));
 
       unsubscribers.push(sm.subscribe("call-request", (data) => {
-        console.log("[HomePage] call-request from:", data.from?.slice(0, 20));
+        console.log("[HomePage] call-request on", server.url, "from:", data.from?.slice(0, 20));
         const contact = contactsRef.current.find(c => c.publicKey === data.from);
 
         if (!contact) {
-          console.warn("[HomePage] Unknown caller, declining");
+          console.warn("[HomePage] Unknown caller on", server.url, "— declining");
           sm.send({ type: "call-declined", from: myPublicKey, to: data.from });
           return;
         }
         if (incomingCallRef.current) {
-          console.warn("[HomePage] Already in call, declining");
+          console.warn("[HomePage] Already in a call — declining on", server.url);
           sm.send({ type: "call-declined", from: myPublicKey, to: data.from });
           return;
         }
 
+        // Tag call with which server it arrived on so acceptCall uses the right socket
         const call = { from: data.from, contact, server: server.url };
         setIncomingCall(call);
         incomingCallRef.current = call;
@@ -147,32 +165,37 @@ export default function HomePage() {
 
         navigate(`/call/${oc.contact.userName}`, {
           state: {
-            contact: oc.contact,
-            callInitiated: true,
+            contact:             oc.contact,
+            callInitiated:       true,
             callAlreadyAccepted: true,
-            signallingServer: oc.server,
+            signallingServer:    oc.server,
           },
         });
       }));
 
       unsubscribers.push(sm.subscribe("error", (data) => {
-        console.error("[HomePage] Server error:", data.message);
-
+        console.error("[HomePage] Server error on", server.url, ":", data.message);
+        // Clear stale token for THIS server only, then remove its socket
         authClient.clearTokens();
         removeSocket(key);
       }));
-    }
-  };
+    };
 
-  setup();
+    // All servers authenticate and connect in parallel
+    const setup = async () => {
+      await Promise.allSettled(servers.map(server => setupServer(server)));
+    };
 
-  return () => {
-    cancelled = true;
-    console.log("[HomePage] Unmounting — removing handlers, keeping sockets alive");
-    unsubscribers.forEach(fn => fn());
-  };
-}, [identityManager]);
-  // ── Make a call ────────────────────────────────────────────────────────
+    setup();
+
+    return () => {
+      cancelled = true;
+      console.log("[HomePage] Unmounting — removing handlers & pings, keeping sockets alive");
+      unsubscribers.forEach(fn => fn());
+    };
+  }, [identityManager]);
+
+  // ── Make a call ──────────────────────────────────────────────────────────
   const handleCall = (contact) => {
     const rawServer = contact.selectedSignallingServer;
     const socketKey = toHttpKey(rawServer);
@@ -190,7 +213,7 @@ export default function HomePage() {
 
     if (!socket || !socket.isOpen()) {
       alert(
-        `Not connected to server.\n\n` +
+        `Not connected to signalling server.\n\n` +
         `Key: "${socketKey}"\n` +
         `Stored keys: ${listSockets().join("\n") || "(none)"}\n` +
         `Socket state: ${socket ? "exists but CLOSED" : "not found"}`
@@ -205,7 +228,7 @@ export default function HomePage() {
     socket.send({
       type: "call-request",
       from: identityManager.getPublicKey(),
-      to: contact.publicKey,
+      to:   contact.publicKey,
     });
 
     callTimeoutRef.current = setTimeout(() => {
@@ -213,15 +236,15 @@ export default function HomePage() {
       socket.send({
         type: "call-cancelled",
         from: identityManager.getPublicKey(),
-        to: contact.publicKey,
+        to:   contact.publicKey,
       });
       setOutgoingCall(null);
       outgoingCallRef.current = null;
       alert(`${contact.userName} didn't answer.`);
-    }, 30000);
+    }, 30_000);
   };
 
-  // ── Cancel outgoing ────────────────────────────────────────────────────
+  // ── Cancel outgoing call ─────────────────────────────────────────────────
   const cancelOutgoing = () => {
     clearTimeout(callTimeoutRef.current);
     const oc = outgoingCallRef.current;
@@ -229,48 +252,52 @@ export default function HomePage() {
     getSocket(toHttpKey(oc.server))?.send({
       type: "call-cancelled",
       from: identityManager.getPublicKey(),
-      to: oc.contact.publicKey,
+      to:   oc.contact.publicKey,
     });
     setOutgoingCall(null);
     outgoingCallRef.current = null;
   };
 
-  // ── Accept incoming call ───────────────────────────────────────────────
+  // ── Accept incoming call ─────────────────────────────────────────────────
   const acceptCall = () => {
     const call = incomingCallRef.current;
     if (!call) return;
 
     const socket = getSocket(toHttpKey(call.server));
-    if (!socket) { alert("Lost connection to server."); return; }
+    if (!socket) { alert("Lost connection to signalling server."); return; }
 
     socket.send({
       type: "call-accepted",
       from: identityManager.getPublicKey(),
-      to: call.from,
+      to:   call.from,
     });
 
     setIncomingCall(null);
     incomingCallRef.current = null;
 
     navigate(`/call/${call.contact.userName}`, {
-      state: { contact: call.contact, incomingCall: true, signallingServer: call.server },
+      state: {
+        contact:         call.contact,
+        incomingCall:    true,
+        signallingServer: call.server,
+      },
     });
   };
 
-  // ── Reject incoming call ───────────────────────────────────────────────
+  // ── Reject incoming call ─────────────────────────────────────────────────
   const rejectCall = () => {
     const call = incomingCallRef.current;
     if (!call) return;
     getSocket(toHttpKey(call.server))?.send({
       type: "call-declined",
       from: identityManager.getPublicKey(),
-      to: call.from,
+      to:   call.from,
     });
     setIncomingCall(null);
     incomingCallRef.current = null;
   };
 
-  // ── Delete contact ─────────────────────────────────────────────────────
+  // ── Delete contact ───────────────────────────────────────────────────────
   const handleDelete = async (contact) => {
     try {
       await identityManager.deleteContact(contact.userName);
@@ -283,7 +310,7 @@ export default function HomePage() {
 
   if (!identityManager) return null;
 
-  // ── Render ─────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="w-full min-h-screen flex flex-col">
       <Navbar
@@ -305,12 +332,10 @@ export default function HomePage() {
                 <div key={contact.userName} className="relative">
                   <UserCard
                     user={{
-                      name: contact.userName,
-                      avatar:
-                        contact.avatar ||
-                        `https://placehold.co/80x80?text=${contact.userName.charAt(0).toUpperCase()}`,
-                      status: contact.status || "Available",
-                      publicKey: contact.publicKey,
+                      name:             contact.userName,
+                      avatar:           contact.avatar || `https://placehold.co/80x80?text=${contact.userName.charAt(0).toUpperCase()}`,
+                      status:           contact.status || "Available",
+                      publicKey:        contact.publicKey,
                       signallingServers: contact.signallingServers,
                       contact,
                     }}
@@ -326,30 +351,39 @@ export default function HomePage() {
         </div>
       </main>
 
-      {/* INCOMING CALL */}
+      {/* INCOMING CALL OVERLAY */}
       {incomingCall && (
         <div className="fixed inset-0 bg-black/70 flex flex-col items-center justify-center z-50">
           <h2 className="text-2xl text-white mb-4">
             Incoming call from {incomingCall.contact?.userName ?? incomingCall.from}
           </h2>
           <div className="flex gap-4">
-            <button className="px-6 py-3 bg-green-600 text-white rounded hover:bg-green-700" onClick={acceptCall}>
+            <button
+              className="px-6 py-3 bg-green-600 text-white rounded hover:bg-green-700"
+              onClick={acceptCall}
+            >
               Accept
             </button>
-            <button className="px-6 py-3 bg-red-600 text-white rounded hover:bg-red-700" onClick={rejectCall}>
+            <button
+              className="px-6 py-3 bg-red-600 text-white rounded hover:bg-red-700"
+              onClick={rejectCall}
+            >
               Decline
             </button>
           </div>
         </div>
       )}
 
-      {/* OUTGOING CALL */}
+      {/* OUTGOING CALL OVERLAY */}
       {outgoingCall && (
         <div className="fixed inset-0 bg-black/70 flex flex-col items-center justify-center z-50">
           <div className="w-14 h-14 rounded-full border-4 border-blue-500 border-t-transparent animate-spin mb-5" />
           <h2 className="text-2xl text-white mb-2">Calling {outgoingCall.contact.userName}…</h2>
           <p className="text-gray-400 text-sm mb-6">Waiting for them to answer</p>
-          <button className="px-6 py-3 bg-red-600 text-white rounded-full hover:bg-red-700" onClick={cancelOutgoing}>
+          <button
+            className="px-6 py-3 bg-red-600 text-white rounded-full hover:bg-red-700"
+            onClick={cancelOutgoing}
+          >
             Cancel
           </button>
         </div>
