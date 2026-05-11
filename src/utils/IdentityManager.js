@@ -1,67 +1,56 @@
-import { exportECDSAPrivateKey, exportECDSAPublicKey, importECDSAPrivateKey, importECDSAPublicKey } from "./crypto";
+
+
+import {
+	exportECDSAPrivateKey,
+	exportECDSAPublicKey,
+	importECDSAPrivateKey,
+	importECDSAPublicKey,
+} from "./crypto";
 
 export class IdentityManager {
-
-	constructor(dbName = "UserDataDB") {
+	constructor(dbName = "userData") {
 		this.dbName = dbName;
+		this.userData = null;
+		this.password = null;
 	}
 
-	// ================= DB HELPERS =================
+	// ─── IndexedDB helpers ────────────────────────────────────────────────────
 
 	async _openDB() {
-
 		return new Promise((resolve, reject) => {
-
-			const request = indexedDB.open(this.dbName, 1);
-
-			request.onupgradeneeded = (e) => {
-
+			const req = indexedDB.open(this.dbName, 1);
+			req.onupgradeneeded = e => {
 				const db = e.target.result;
 				if (!db.objectStoreNames.contains("userData")) db.createObjectStore("userData");
 			};
-
-			request.onsuccess = () => resolve(request.result);
-
-			request.onerror = () => reject(request.error);
+			req.onsuccess = () => resolve(req.result);
+			req.onerror = () => reject(req.error);
 		});
 	}
 
 	async _storeObject(storeName, key, value) {
-
 		const db = await this._openDB();
-
 		return new Promise((resolve, reject) => {
-
 			const tx = db.transaction(storeName, "readwrite");
-
 			tx.objectStore(storeName).put(value, key);
-
 			tx.oncomplete = () => resolve();
-
 			tx.onerror = () => reject(tx.error);
 		});
 	}
 
 	async _getObject(storeName, key) {
-
 		const db = await this._openDB();
-
 		return new Promise((resolve, reject) => {
-
 			const tx = db.transaction(storeName, "readonly");
-
-			const request = tx.objectStore(storeName).get(key);
-
-			request.onsuccess = () => resolve(request.result || null);
-
-			request.onerror = () => reject(request.error);
+			const req = tx.objectStore(storeName).get(key);
+			req.onsuccess = () => resolve(req.result ?? null);
+			req.onerror = () => reject(req.error);
 		});
 	}
 
-	// ================= KEY DERIVATION =================
+	// ─── Key derivation (passphrase → AES-GCM) ───────────────────────────────
 
 	async _deriveAESKey(password, salt) {
-
 		const pwKey = await crypto.subtle.importKey(
 			"raw",
 			new TextEncoder().encode(password),
@@ -69,19 +58,10 @@ export class IdentityManager {
 			false,
 			["deriveKey"]
 		);
-
 		return crypto.subtle.deriveKey(
-			{
-				name: "PBKDF2",
-				salt,
-				iterations: 200000,
-				hash: "SHA-256"
-			},
+			{ name: "PBKDF2", salt, iterations: 200_000, hash: "SHA-256" },
 			pwKey,
-			{
-				name: "AES-GCM",
-				length: 256
-			},
+			{ name: "AES-GCM", length: 256 },
 			true,
 			["encrypt", "decrypt"]
 		);
@@ -90,47 +70,33 @@ export class IdentityManager {
 	async encryptWithPassphrase(obj, password) {
 		const salt = crypto.getRandomValues(new Uint8Array(16));
 		const iv = crypto.getRandomValues(new Uint8Array(12));
-
 		const aesKey = await this._deriveAESKey(password, salt);
-
-		const enc = new TextEncoder();
-		const data = enc.encode(JSON.stringify(obj));
-
 		const ciphertext = await crypto.subtle.encrypt(
 			{ name: "AES-GCM", iv },
 			aesKey,
-			data
+			new TextEncoder().encode(JSON.stringify(obj))
 		);
-
 		return {
 			salt: Array.from(salt),
 			iv: Array.from(iv),
-			data: Array.from(new Uint8Array(ciphertext))
+			data: Array.from(new Uint8Array(ciphertext)),
 		};
 	}
 
 	async decryptWithPassphrase(encrypted, password) {
-		const salt = new Uint8Array(encrypted.salt);
-		const iv = new Uint8Array(encrypted.iv);
-		const data = new Uint8Array(encrypted.data);
-
-		const aesKey = await this._deriveAESKey(password, salt);
-
+		const aesKey = await this._deriveAESKey(password, new Uint8Array(encrypted.salt));
 		const decrypted = await crypto.subtle.decrypt(
-			{ name: "AES-GCM", iv },
+			{ name: "AES-GCM", iv: new Uint8Array(encrypted.iv) },
 			aesKey,
-			data
+			new Uint8Array(encrypted.data)
 		);
-
-		const dec = new TextDecoder();
-		return JSON.parse(dec.decode(decrypted));
+		return JSON.parse(new TextDecoder().decode(decrypted));
 	}
 
+	// ─── Identity lifecycle ───────────────────────────────────────────────────
 
-
-	// ---------------- Create new user identity ----------------
 	async createUser(userName, password) {
-		if (this.userData) throw new Error("Can't create new user using IdentityManager holding other user's data");
+		if (this.userData) throw new Error("IdentityManager already holds a user — create a new instance.");
 
 		const keyPair = await crypto.subtle.generateKey(
 			{ name: "ECDSA", namedCurve: "P-256" },
@@ -145,279 +111,221 @@ export class IdentityManager {
 			contacts: [],
 			stunServers: [],
 			turnServers: [],
-			signallingServers: []
+			signallingServers: [],
 		};
 		this.password = password;
 
-		await this.storeEncryptedUserData();
-
-		console.log("User created");
+		await this._persist();
+		console.log("User created:", userName);
 	}
 
-	// ---------------- Unlock user identity ----------------
 	async unlockUser(userName, password) {
-		if (this.userData) throw new Error("Double unlock using same IdentityManager not possible");
-
+		if (this.userData) throw new Error("Already unlocked — create a new instance for a different user.");
 		const record = await this._getObject("userData", userName);
 		if (!record) throw new Error("User not found");
-
 		this.userData = await this.decryptWithPassphrase(record, password);
 		this.password = password;
 	}
 
-	// lock user data
-	async storeEncryptedUserData() {
-		const encryptedData = await this.encryptWithPassphrase(this.userData, this.password);
-		await this._storeObject("userData", this.userData.userName, encryptedData);
+	/** Re-encrypt and write userData to IndexedDB. */
+	async _persist() {
+		const encrypted = await this.encryptWithPassphrase(this.userData, this.password);
+		await this._storeObject("userData", this.userData.userName, encrypted);
 	}
 
+	// ─── Identity accessors ───────────────────────────────────────────────────
 
-	// ================= CONTACT MANAGEMENT =================
+	getUserName() { return this.userData?.userName ?? null; }
+	getPublicKey() { return this.userData?.publicKey ?? null; }
+	getPrivateKey() { return this.userData?.privateKey ?? null; }
 
-	// Add a contact for the given user
+	async updateUsername(newName) {
+		const db = await this._openDB();
+		// Delete old record
+		await new Promise((resolve, reject) => {
+			const tx = db.transaction("userData", "readwrite");
+			tx.objectStore("userData").delete(this.userData.userName);
+			tx.oncomplete = resolve;
+			tx.onerror = () => reject(tx.error);
+		});
+		this.userData.userName = newName;
+		await this._persist();
+	}
+
+	// ─── Contact management ───────────────────────────────────────────────────
+
+	getContacts() { return this.userData.contacts; }
+
 	async addContact(contact) {
 		this.userData.contacts.push(contact);
-
-		await this.storeEncryptedUserData();
+		await this._persist();
 	}
 
-	// Get contacts for a given user
-	getContacts() {
-		return this.userData.contacts;
-	}
-
-	// Delete a contact
 	async deleteContact(contactUserName) {
-		this.userData.contacts = this.userData.contacts.filter(
-			(c) => c.userName !== contactUserName
-		);
-
-		await this.storeEncryptedUserData();
+		this.userData.contacts = this.userData.contacts.filter(c => c.userName !== contactUserName);
+		await this._persist();
 	}
 
 	async updateContact(contactUserName, updates) {
-
-		const contactIndex = this.userData.contacts.findIndex(c => c.userName === contactUserName);
-		if (contactIndex === -1) throw new Error("Contact not found");
-
-		this.userData.contacts[contactIndex] = {
-			...this.userData.contacts[contactIndex],
-			...updates
-		};
-
-		await this.storeEncryptedUserData();
-		return this.userData.contacts[contactIndex];
+		const idx = this.userData.contacts.findIndex(c => c.userName === contactUserName);
+		if (idx === -1) throw new Error("Contact not found");
+		this.userData.contacts[idx] = { ...this.userData.contacts[idx], ...updates };
+		await this._persist();
+		return this.userData.contacts[idx];
 	}
 
 	async addContactSignallingServer(contactUserName, serverURL) {
 		const contact = this.userData.contacts.find(c => c.userName === contactUserName);
 		if (!contact) throw new Error("Contact not found");
-
-		if (contact.signallingServers.includes(serverURL)) throw new Error("Signaling server already exists for this contact");
-		contact.signallingServers.push(serverURL)
-		await this.storeEncryptedUserData();
+		contact.signallingServers = contact.signallingServers || [];
+		if (contact.signallingServers.includes(serverURL)) throw new Error("Server already added for this contact");
+		contact.signallingServers.push(serverURL);
+		await this._persist();
 	}
 
 	async removeContactSignallingServer(contactUserName, serverURL) {
 		const contact = this.userData.contacts.find(c => c.userName === contactUserName);
 		if (!contact) throw new Error("Contact not found");
-
-		if (!contact.signallingServers.includes(serverURL)) throw new Error("Signaling server doesn't exist for this contact");
-
+		if (!contact.signallingServers?.includes(serverURL)) throw new Error("Server not found for this contact");
 		contact.signallingServers = contact.signallingServers.filter(x => x !== serverURL);
-
-		await this.storeEncryptedUserData();
+		await this._persist();
 	}
 
-	//async updateContactSignalingServer(userName, contactUserName, serverURL) {
-	//	const record = await this._getObject("keys", userName);
-	//	if (!record) throw new Error("User not found");
-
-	//	const contact = record.contacts.find(c => c.userName === contactUserName);
-	//	if (!contact) throw new Error("Contact not found");
-
-	//	if (serverURL === null) {
-	//		// Remove the signalingServerURL entirely
-	//		delete contact.signalingServerURL;
-	//		contact.signalingServers = (contact.signalingServers || []);
-	//	} else {
-	//		contact.signalingServerURL = serverURL;
-	//		contact.signalingServers = contact.signalingServers || [];
-	//		if (!contact.signalingServers.includes(serverURL)) {
-	//			contact.signalingServers.push(serverURL);
-	//		}
-	//	}
-
-	//	await this._storeObject("keys", userName, record);
-	//	return contact;
-	//}
-
-	// Get signaling server for a specific contact
 	async getContactSignallingServers(contactUserName) {
 		const contact = this.userData.contacts.find(c => c.userName === contactUserName);
-
 		if (!contact) throw new Error("Contact not found");
-
-		return contact.signallingServers;
+		return contact.signallingServers || [];
 	}
 
-	// ============ USERNAME MANAGEMENT ============
+	// ─── STUN servers ─────────────────────────────────────────────────────────
 
-	getUserName() {
-		return this.userData.userName;
-	}
+	getStunServers() { return this.userData.stunServers; }
 
-	async updateUsername(newName) {
-		const db = await this._openDB()
-		const tx = db.transaction("userData", "readwrite")
-		const store = tx.objectStore("userData")
-
-
-		store.delete(this.userData.userName)
-
-		this.userData.userName = newName;
-
-		await this.storeEncryptedUserData();
-
-		await new Promise((resolve, reject) => {
-			tx.oncomplete = resolve;
-			tx.onerror = () => reject(tx.error);
-		});
-	}
-
-
-	// Key management
-	getPublicKey() {
-		return this.userData.publicKey;
-	}
-
-	getPrivateKey() {
-		return this.userData.privateKey;
-	}
-
-	// ================= STUN SERVERS =================
-
-	async addStunServer(stunUrl) {
-		if (!this.userData.stunServers.includes(stunUrl)) {
-			this.userData.stunServers.push(stunUrl);
-			await this.storeEncryptedUserData();
+	async addStunServer(url) {
+		if (!this.userData.stunServers.includes(url)) {
+			this.userData.stunServers.push(url);
+			await this._persist();
 		}
 	}
 
-	getStunServers() {
-		return this.userData.stunServers;
+	async deleteStunServer(url) {
+		this.userData.stunServers = this.userData.stunServers.filter(s => s !== url);
+		await this._persist();
 	}
 
-	async deleteStunServer(stunUrl) {
-		this.userData.stunServers = this.userData.stunServers.filter(
-			(s) => s !== stunUrl
-		);
+	// ─── TURN servers ─────────────────────────────────────────────────────────
 
-		await this.storeEncryptedUserData();
-	}
+	getTurnServers() { return this.userData.turnServers; }
 
-	// ============ TURN SERVER MANAGEMENT ============
-
-	async addTurnServer(turnServer) {
-		if (!this.userData.turnServers.includes(turnServer)) {
-			this.userData.turnServers.push(turnServer);
-			await this.storeEncryptedUserData();
+	async addTurnServer(server) {
+		if (!this.userData.turnServers.some(s => s.url === server.url)) {
+			this.userData.turnServers.push(server);
+			await this._persist();
 		}
 	}
 
-	getTurnServers() {
-		return this.userData.turnServers;
+	async deleteTurnServer(url) {
+		this.userData.turnServers = this.userData.turnServers.filter(s => s.url !== url);
+		await this._persist();
 	}
 
-	async deleteTurnServer(serverUrl) {
+	// ─── Signalling servers ───────────────────────────────────────────────────
 
-		this.userData.turnServers = this.userData.turnServers.filter(
-			(s) => s.url !== serverUrl
-		);
+	getSignallingServers() { return this.userData.signallingServers; }
 
-		await this.storeEncryptedUserData();
-	}
-
-	// ================= SIGNALLING SERVERS =================
-
+	/**
+	 * Add a signaling server by URL.
+	 * No-op if already present.
+	 */
 	async addSignallingServer(url) {
-
-		const exists = this.userData.signallingServers.find((server) => server.url === url)
-
+		const exists = this.userData.signallingServers.some(s => s.url === url);
 		if (!exists) {
 			this.userData.signallingServers.push({
 				url,
-				own: false,
 				requested: false,
 				revoked: false,
 				registered: false,
-				requestedAt: null
+				requestedAt: null,
+				accessToken: null,
+				refreshToken: null,
+				isAdmin: false,
 			});
-			await this.storeEncryptedUserData();
+			await this._persist();
 		}
 	}
 
-	async setOwnerShipForSignallingServer(url, own = false) {
-		const server = this.userData.signallingServers.find((server) => server.url === url);
-
-		if (server) {
-			server.own = own;
-			await this.storeEncryptedUserData();
-		}
-	}
-
-	getSignallingServers() {
-		return this.userData.signallingServers;
-	}
 
 	async deleteSignallingServer(url) {
 		this.userData.signallingServers = this.userData.signallingServers.filter(s => s.url !== url);
-
-		await this.storeEncryptedUserData();
+		await this._persist();
 	}
 
+	async setOwnershipForSignallingServer(url, own = false) {
+		const server = this.userData.signallingServers.find(s => s.url === url);
+		if (server) { server.own = own; await this._persist(); }
+	}
 
-
-	// ================= SERVER ACCESS CONTROL =================
+	// ── Access state helpers ──
 
 	async requestSignallingServerAccess(url) {
-		const server = this.userData.signallingServers.find((server) => server.url === url);
-
+		const server = this.userData.signallingServers.find(s => s.url === url);
 		if (server) {
 			server.requested = true;
-			server.requestedAt = Date.now()
-			await this.storeEncryptedUserData();
-		}
-	}
-
-	async revokeSignallingServerAccess(url) {
-		const server = this.userData.signallingServers.find((server) => server.url === url);
-
-		if (server) {
-			server.requested = false;
-			server.revoked = true;
-			server.registered = false;
-			await this.storeEncryptedUserData();
+			server.requestedAt = Date.now();
+			await this._persist();
 		}
 	}
 
 	async registerSignallingServerAccess(url) {
-		const server = this.userData.signallingServers.find((server) => server.url === url);
-
+		const server = this.userData.signallingServers.find(s => s.url === url);
 		if (server) {
 			server.registered = true;
 			server.requested = false;
-			server.requested = false;
-			await this.storeEncryptedUserData();
+			server.revoked = false;
+			await this._persist();
 		}
 	}
 
-	getSignallingServerAccessStatus(url) {
-
-		const server = this.userData.signallingServers.find((server) => server.url === url);
-
+	async revokeSignallingServerAccess(url) {
+		const server = this.userData.signallingServers.find(s => s.url === url);
 		if (server) {
-			return server.signallingServers;
+			server.registered = false;
+			server.requested = false;
+			server.revoked = true;
+			await this._persist();
 		}
+	}
+
+	getSignallingServerTokens(url) {
+		const server = this.userData.signallingServers.find(s => s.url === url);
+		if (!server) return null;
+		return { accessToken: server.accessToken, refreshToken: server.refreshToken, isAdmin:server.isAdmin };
+	}
+
+	async setSignallingServerTokens(url, { accessToken, refreshToken, isAdmin }) {
+		const server = this.userData.signallingServers.find(s => s.url === url);
+		if (!server) throw new Error("Signalling server not found");
+		server.accessToken = accessToken;
+		server.refreshToken = refreshToken;
+		server.isAdmin = isAdmin;
+		console.log("Set sign tokens", accessToken, refreshToken, isAdmin);
+		await this._persist();
+	}
+
+	async clearSignallingServerTokens(url) {
+		const server = this.userData.signallingServers.find(s => s.url === url);
+		if (!server) return;
+		server.accessToken = null;
+		server.refreshToken = null;
+		server.isAdmin = false;
+		await this._persist();
+	}
+
+	/**
+	 * Returns the access status object for a signalling server, or null if not found.
+	 * Shape: { url, own, requested, revoked, registered, requestedAt }
+	 */
+	getSignallingServerAccessStatus(url) {
+		return this.userData.signallingServers.find(s => s.url === url) ?? null;
 	}
 }
