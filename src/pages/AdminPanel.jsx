@@ -1,10 +1,4 @@
-/**
- * AdminPanel
- *
- * Authenticates using the same ECDSA challenge-response as regular users.
- * The admin identity comes from the app's IdentityManager — no password needed.
- * The server grants role:"admin" because the JWT is signed for the ADMIN_KEY.
- */
+
 
 import { useEffect, useRef, useState } from "react";
 import { useUser } from "../utils/UserContext";
@@ -21,7 +15,7 @@ function toHttp(url) {
 
 function truncate(key, n = 24) {
   if (!key || key.length <= n) return key;
-  return `${key.slice(0, n)}…`;
+  return `${key.slice(-12)}…`;
 }
 
 function safeText(v) {
