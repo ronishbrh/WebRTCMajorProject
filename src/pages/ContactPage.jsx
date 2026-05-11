@@ -2,7 +2,6 @@ import { useEffect, useState, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import Navbar from "../components/Navbar.jsx";
 import { useUser } from "../utils/UserContext";
-import { BrowserMultiFormatReader } from "@zxing/browser";
 import { Camera, Upload } from "lucide-react";
 import pako from "pako";
 import jsQR from "jsqr";
@@ -22,11 +21,13 @@ export default function ContactPage() {
     const [message, setMessage]             = useState("");
     const [messageType, setMessageType]     = useState("");
     const [scannerActive, setScannerActive] = useState(false);
+    const [uploading, setUploading]         = useState(false);
 
-    const qrScannerRef = useRef(null);
-    const controlsRef  = useRef(null);
+    const videoRef       = useRef(null);
+    const streamRef      = useRef(null);
+    const animFrameRef   = useRef(null);
+    const canvasScanRef  = useRef(document.createElement("canvas"));
 
-  
     useEffect(() => {
         if (editMode && existingContact) {
             setUserName(existingContact.userName || "");
@@ -38,18 +39,13 @@ export default function ContactPage() {
 
     useEffect(() => {
         if (!identityManager) { navigate("/login"); return; }
-        return () => {
-            controlsRef.current?.stop();
-            qrScannerRef.current = null;
-            controlsRef.current  = null;
-        };
+        return () => stopScanner();
     }, [identityManager, navigate]);
 
     if (!identityManager) return null;
 
-    /* ── QR parsing ──────────────────────────────────────────────────────── */
+    /* ── QR parsing ──────────────────────────────────────────────────── */
     const parseQRData = (qrText) => {
-      
         try {
             const json = pako.inflate(
                 Uint8Array.from(atob(qrText), c => c.charCodeAt(0)),
@@ -58,29 +54,20 @@ export default function ContactPage() {
             return JSON.parse(json);
         } catch { /* not compressed */ }
 
-        try {
-            return JSON.parse(qrText);
-        } catch { /* not JSON */ }
-
+        try { return JSON.parse(qrText); } catch { /* not JSON */ }
 
         return { publicKey: qrText };
     };
 
     const applyQRData = (data) => {
         console.log("QR Parsed:", data);
-
         const name = data.n ?? data.userName ?? data.username ?? "";
         if (name) setUserName(name);
 
         const pk = data.k ?? data.publicKey ?? data.public_key ?? "";
         if (pk) setPublicKey(pk);
 
-        const rawServers =
-            data.s ??
-            data.signallingServers ??
-            data.signalingServers ??
-            [];
-
+        const rawServers = data.s ?? data.signallingServers ?? data.signalingServers ?? [];
         if (Array.isArray(rawServers) && rawServers.length > 0) {
             const normalized = rawServers
                 .map(s => (typeof s === "string" ? s : s?.url))
@@ -89,102 +76,138 @@ export default function ContactPage() {
         }
     };
 
-    /* ── Camera scanner ──────────────────────────────────────────────────── */
-    const startScanner = async () => {
-        if (qrScannerRef.current) {
-            controlsRef.current?.stop();
-            qrScannerRef.current = null;
-            controlsRef.current  = null;
-            setScannerActive(false);
+    /* ── Camera scanner (native getUserMedia + jsQR) ─────────────────── */
+    const stopScanner = () => {
+        if (animFrameRef.current) {
+            cancelAnimationFrame(animFrameRef.current);
+            animFrameRef.current = null;
+        }
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(t => t.stop());
+            streamRef.current = null;
+        }
+        if (videoRef.current) videoRef.current.srcObject = null;
+        setScannerActive(false);
+    };
+
+    const tickScan = () => {
+        const video  = videoRef.current;
+        const canvas = canvasScanRef.current;
+        if (!video || video.readyState !== video.HAVE_ENOUGH_DATA) {
+            animFrameRef.current = requestAnimationFrame(tickScan);
             return;
         }
 
-        const reader = new BrowserMultiFormatReader();
-        qrScannerRef.current = reader;
-        setScannerActive(true);
-
-        try {
-            const videoElement = document.getElementById("qr-reader");
-            const devices = await BrowserMultiFormatReader.listVideoInputDevices();
-            const backCamera =
-                devices.find(d => d.label.toLowerCase().includes("back")) || devices[0];
-
-            controlsRef.current = await reader.decodeFromVideoDevice(
-                backCamera?.deviceId,
-                videoElement,
-                (result) => {
-                    if (result) {
-                        const parsed = parseQRData(result.getText().trim());
-                        applyQRData(parsed);
-                        controlsRef.current?.stop();
-                        qrScannerRef.current = null;
-                        controlsRef.current  = null;
-                        setScannerActive(false);
-                    }
-                }
-            );
-        } catch (err) {
-            console.error(err);
-            alert("Camera access failed");
-            qrScannerRef.current = null;
-            setScannerActive(false);
-        }
-    };
-
-    /* ── File upload  ─────────────────────────── */
-    const handleFileUpload = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-      
-        e.target.value = "";
-
-        const bitmap = await createImageBitmap(file);
-        const canvas = document.createElement("canvas");
-        canvas.width  = bitmap.width;
-        canvas.height = bitmap.height;
-
+        canvas.width  = video.videoWidth;
+        canvas.height = video.videoHeight;
         const ctx = canvas.getContext("2d");
-        ctx.drawImage(bitmap, 0, 0);
+        ctx.drawImage(video, 0, 0);
 
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const code = jsQR(imageData.data, imageData.width, imageData.height, {
             inversionAttempts: "dontInvert",
         });
 
-        if (code) {
-            console.log("jsQR decoded:", code.data);
+        if (code?.data) {
+            console.log("Camera QR decoded:", code.data);
             const parsed = parseQRData(code.data.trim());
             applyQRData(parsed);
-        } else {
-          
-            const codeInverted = jsQR(imageData.data, imageData.width, imageData.height, {
-                inversionAttempts: "onlyInvert",
-            });
-            if (codeInverted) {
-                const parsed = parseQRData(codeInverted.data.trim());
-                applyQRData(parsed);
-            } else {
-                alert("Could not read QR code from image.\n\nTips:\n• Make sure the QR code is clear and not blurry\n• Try a higher resolution image\n• Ensure good contrast");
-            }
+            stopScanner();
+            return;
+        }
+
+        animFrameRef.current = requestAnimationFrame(tickScan);
+    };
+
+    const startScanner = async () => {
+        if (scannerActive) { stopScanner(); return; }
+
+        try {
+            const constraints = {
+                video: {
+                    facingMode: { ideal: "environment" }, // back camera
+                    width:  { ideal: 1280 },
+                    height: { ideal: 720 },
+                },
+            };
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            streamRef.current = stream;
+
+            const video = videoRef.current;
+            video.srcObject = stream;
+            await video.play();
+
+            setScannerActive(true);
+            animFrameRef.current = requestAnimationFrame(tickScan);
+        } catch (err) {
+            console.error("Camera error:", err);
+            alert("Camera access failed: " + err.message);
+            stopScanner();
         }
     };
 
-    /* ── Submit ──────────────────────────────────────────────────────────── */
+    /* ── File upload ─────────────────────────────────────────────────── */
+    const handleFileUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        e.target.value = "";
+
+        setUploading(true);
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const blob        = new Blob([arrayBuffer], { type: file.type });
+            const url         = URL.createObjectURL(blob);
+
+            const img = await new Promise((resolve, reject) => {
+                const image  = new Image();
+                image.onload = () => resolve(image);
+                image.onerror = () => reject(new Error("Image load failed"));
+                image.src = url;
+            });
+
+            const canvas = document.createElement("canvas");
+            canvas.width  = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0);
+            URL.revokeObjectURL(url);
+
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+            // Try normal, then inverted
+            const code =
+                jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" }) ??
+                jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "onlyInvert" });
+
+            if (code?.data) {
+                console.log("File QR decoded:", code.data);
+                const parsed = parseQRData(code.data.trim());
+                applyQRData(parsed);
+                setMessage("QR code scanned successfully!");
+                setMessageType("success");
+            } else {
+                setMessage("Could not read QR code. Try a clearer, higher-contrast image.");
+                setMessageType("error");
+            }
+        } catch (err) {
+            console.error("File upload error:", err);
+            setMessage("Failed to process image: " + err.message);
+            setMessageType("error");
+        } finally {
+            setUploading(false);
+        }
+    };
+
+    /* ── Submit ──────────────────────────────────────────────────────── */
     const handleSubmit = async (e) => {
         e.preventDefault();
-
         if (!userName || !publicKey) {
             setMessage("Username and Public Key are required!");
             setMessageType("error");
             return;
         }
-
         try {
-            const cleanedServers = signalingURLs
-                .map(u => u.trim())
-                .filter(u => u !== "");
-
+            const cleanedServers = signalingURLs.map(u => u.trim()).filter(u => u !== "");
             const contact = {
                 userName,
                 publicKey: publicKey.trim(),
@@ -194,9 +217,7 @@ export default function ContactPage() {
 
             if (editMode) {
                 await identityManager.updateContact(originalUserName, contact);
-                for (const url of cleanedServers) {
-                    await identityManager.addSignallingServer(url);
-                }
+                for (const url of cleanedServers) await identityManager.addSignallingServer(url);
                 setMessage("Contact updated successfully!");
                 setMessageType("success");
             } else {
@@ -206,30 +227,21 @@ export default function ContactPage() {
                     setMessageType("error");
                     return;
                 }
-
                 await identityManager.addContact(contact);
-                for (const url of cleanedServers) {
-                    await identityManager.addSignallingServer(url);
-                }
-
+                for (const url of cleanedServers) await identityManager.addSignallingServer(url);
                 setMessage("Contact added successfully!");
                 setMessageType("success");
-                setUserName("");
-                setPublicKey("");
-                setSignalingURLs([""]);
+                setUserName(""); setPublicKey(""); setSignalingURLs([""]);
             }
-
             setTimeout(() => navigate("/"), 1500);
         } catch (err) {
             console.error(err);
-            setMessage(
-                (editMode ? "Failed to update contact: " : "Failed to add contact: ") + err.message
-            );
+            setMessage((editMode ? "Failed to update: " : "Failed to add: ") + err.message);
             setMessageType("error");
         }
     };
 
-    /* ── UI ──────────────────────────────────────────────────────────────── */
+    /* ── UI ──────────────────────────────────────────────────────────── */
     return (
         <div className="w-full min-h-screen flex flex-col">
             <Navbar
@@ -237,14 +249,12 @@ export default function ContactPage() {
                 onProfileClick={() => navigate("/profile")}
                 onServerClick={() => navigate("/server")}
             />
-
             <main className="p-4 sm:p-6 flex-1 max-w-md mx-auto">
                 <h2 className="text-2xl font-semibold mb-4">
                     {editMode ? "Edit Contact" : "Add New Contact"}
                 </h2>
 
                 <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-
                     {/* USERNAME */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -281,24 +291,27 @@ export default function ContactPage() {
                             >
                                 <Camera size={20} />
                             </button>
-                            <label title="Upload QR image">
+                            <label title="Upload QR image" className={uploading ? "opacity-50 pointer-events-none" : ""}>
                                 <input
                                     type="file"
                                     accept="image/*"
                                     onChange={handleFileUpload}
                                     className="hidden"
+                                    disabled={uploading}
                                 />
                                 <div className="p-2 border rounded cursor-pointer hover:bg-gray-50">
-                                    <Upload size={20} />
+                                    {uploading ? "⏳" : <Upload size={20} />}
                                 </div>
                             </label>
                         </div>
                     </div>
 
-                    {/* CAMERA PREVIEW */}
+                    {/* CAMERA PREVIEW — now uses a real ref */}
                     <video
-                        id="qr-reader"
+                        ref={videoRef}
                         className={`w-full h-72 border rounded bg-black ${scannerActive ? "block" : "hidden"}`}
+                        muted
+                        playsInline
                     />
 
                     {/* SIGNALING SERVERS */}
