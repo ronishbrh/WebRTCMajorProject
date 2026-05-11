@@ -44,7 +44,6 @@ export default function HomePage() {
     console.log("[HomePage] Contacts loaded:", list.length);
   }, [identityManager]);
 
-  // ── Connect + always attach handlers ──────────────────────────────────
   useEffect(() => {
     if (!identityManager) return;
 
@@ -75,10 +74,10 @@ export default function HomePage() {
       let sm = getSocket(key);
 
       if (sm && sm.isOpen()) {
-        // Socket already open — just re-attach handlers (this is the critical fix)
+      
         console.log("[HomePage] Reusing open socket, re-attaching handlers for:", key);
       } else {
-        // No socket or socket is closed — open a new one
+       
         console.log("[HomePage] Opening new WebSocket:", wsUrl);
         const ws = new WebSocket(wsUrl);
 
@@ -93,8 +92,6 @@ export default function HomePage() {
         addSocket(key, sm);
       }
 
-      // Always attach handlers — whether socket is new or reused
-      // SocketManager.subscribe() overwrites the handler so no duplicates
       unsubscribers.push(sm.subscribe("registered", (data) => {
         console.log("[HomePage] Successfully registered on server:", data.publicKey?.slice(0, 20));
       }));
@@ -164,8 +161,6 @@ export default function HomePage() {
       }));
     }
 
-    // On unmount: remove handlers but DO NOT close sockets
-    // Sockets live in UserProvider and must survive remounts
     return () => {
       console.log("[HomePage] Unmounting — removing handlers only, keeping sockets alive");
       unsubscribers.forEach(fn => fn());

@@ -26,7 +26,7 @@ export default function ContactPage() {
     const qrScannerRef = useRef(null);
     const controlsRef  = useRef(null);
 
-    /* Pre-fill in edit mode */
+  
     useEffect(() => {
         if (editMode && existingContact) {
             setUserName(existingContact.userName || "");
@@ -36,7 +36,6 @@ export default function ContactPage() {
         }
     }, [editMode, existingContact]);
 
-    /* Cleanup camera on unmount */
     useEffect(() => {
         if (!identityManager) { navigate("/login"); return; }
         return () => {
@@ -50,7 +49,7 @@ export default function ContactPage() {
 
     /* ── QR parsing ──────────────────────────────────────────────────────── */
     const parseQRData = (qrText) => {
-        // 1. Try pako-compressed JSON
+      
         try {
             const json = pako.inflate(
                 Uint8Array.from(atob(qrText), c => c.charCodeAt(0)),
@@ -59,12 +58,11 @@ export default function ContactPage() {
             return JSON.parse(json);
         } catch { /* not compressed */ }
 
-        // 2. Try plain JSON
         try {
             return JSON.parse(qrText);
         } catch { /* not JSON */ }
 
-        // 3. Treat as raw public key string
+
         return { publicKey: qrText };
     };
 
@@ -133,12 +131,12 @@ export default function ContactPage() {
         }
     };
 
-    /* ── File upload — uses jsQR for reliability ─────────────────────────── */
+    /* ── File upload  ─────────────────────────── */
     const handleFileUpload = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
-        // Reset input so same file can be re-uploaded
+      
         e.target.value = "";
 
         const bitmap = await createImageBitmap(file);
@@ -159,7 +157,7 @@ export default function ContactPage() {
             const parsed = parseQRData(code.data.trim());
             applyQRData(parsed);
         } else {
-            // Fallback: try with inverted colours (some QR codes are dark-on-light)
+          
             const codeInverted = jsQR(imageData.data, imageData.width, imageData.height, {
                 inversionAttempts: "onlyInvert",
             });

@@ -281,7 +281,7 @@ export default function CallPage() {
 			// 4. ECDH keypair
 			ECDHKeyPair.current = await generateECDHKeys();
 
-			// 5. Get socket — MUST use toHttpKey() since sockets are stored under https:// keys
+			// 5. Get socket 
 			const socketKey = toHttpKey(signallingServer);
 			console.log("[CallPage] Looking up socket with key:", socketKey);
 			wsRef.current = getSocket(socketKey);
@@ -452,7 +452,7 @@ export default function CallPage() {
 			cleanupMedia();
 			unsubscribers.forEach(u => u());
 		};
-	}, []); // eslint-disable-line react-hooks/exhaustive-deps
+	}, []); 
 
 	if (!identityManager) return null;
 
@@ -495,7 +495,6 @@ export default function CallPage() {
 		if (track) { track.enabled = !track.enabled; setIsAudioOn(track.enabled); }
 	};
 
-	// ── Render ───────────────────────────────────────────────────────────────
 	return (
 		<div className="fixed inset-0 bg-black text-white overflow-hidden" onClick={showControls}>
 			<video ref={remoteVideoRef} autoPlay playsInline className="absolute inset-0 w-full h-full object-contain" />

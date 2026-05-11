@@ -255,11 +255,11 @@ export default class ConnectionTester {
 
   logPrivacyReport() {
     const metrics = this.getPrivacyMetrics();
-    // Guard: p2pStats may be null if stop() is called before any ICE candidates were gathered
+  
     const p2pStats = metrics.p2pSuccessRate;
     const p2pPct = p2pStats != null ? parseFloat(p2pStats.p2pPercentage) : null;
 
-    // Determine privacy rating safely
+
     let privacyRating;
     if (p2pPct == null) {
       privacyRating = '⏳ No candidate data yet';
@@ -314,7 +314,7 @@ export default class ConnectionTester {
   stop() {
     this.running = false;
     this.logPrivacyReport();
-    // Only attempt CSV download if there is data to write
+
     if (this.collectedStats.length > 0) {
       this.downloadCSV();
     }

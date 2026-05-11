@@ -22,7 +22,7 @@ export default function StunServerSection() {
         stored = identityManager.getStunServers();
       }
 
-      // Spread into new array so React detects the change
+   
       setServers([...stored]);
 
       const savedActive = localStorage.getItem("activeStun");
@@ -55,7 +55,7 @@ export default function StunServerSection() {
     const updated = [...identityManager.getStunServers()];
     setServers(updated);
 
-    // If deleted the active server, switch to first remaining
+ 
     if (active === url) {
       const next = updated[0] ?? null;
       setActive(next);
@@ -112,7 +112,7 @@ export default function StunServerSection() {
     localStorage.setItem("activeStun", server);
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────
+
   return (
     <div>
       <h2 className="font-semibold mb-3 text-sm sm:text-base">

@@ -13,11 +13,11 @@ export async function getMeterredTurnServers() {
       throw new Error(`Backend returned status ${response.status}`);
     }
 
-    // Get the raw text first
+  
     const text = await response.text();
     console.log('Raw response:', text);
 
-    // Try to parse it
+
     let data;
     try {
       data = JSON.parse(text);
@@ -26,7 +26,7 @@ export async function getMeterredTurnServers() {
       throw e;
     }
 
-    // Check if we got valid data
+
     if (!data.iceServers || data.iceServers.length === 0) {
       console.warn('⚠️ No TURN servers returned from backend');
       return [];
@@ -36,7 +36,7 @@ export async function getMeterredTurnServers() {
       serverCount: data.iceServers.length
     });
 
-    // Convert Metered format to our internal format
+
     return data.iceServers.map(server => ({
       url: typeof server.urls === 'string' ? server.urls : server.urls[0],
       username: server.username || '',
@@ -52,23 +52,23 @@ export async function getMeterredTurnServers() {
 }
 
 export async function getIceServersConfig(additionalTurnServers = []) {
-  // Fetch fresh Metered TURN credentials from backend
+
   const meterredServers = await getMeterredTurnServers();
 
-  // Combine Metered + manually added servers
+
   const allTurnServers = [...meterredServers, ...additionalTurnServers];
 
-  // Build RTCPeerConnection config
+  
   const config = {
     iceServers: [
-      // STUN servers (free, unlimited, no authentication)
+     
       {
         urls: [
           'stun:stun.l.google.com:19302',
-          'stun:stun1.l.google.com:19302',
-          'stun:stun2.l.google.com:19302',
-          'stun:stun3.l.google.com:19302',
-          'stun:stun4.l.google.com:19302',
+          // 'stun:stun1.l.google.com:19302',
+          // 'stun:stun2.l.google.com:19302',
+          // 'stun:stun3.l.google.com:19302',
+          // 'stun:stun4.l.google.com:19302',
         ]
       },
       // TURN servers (Metered free + manually added)

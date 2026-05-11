@@ -96,7 +96,7 @@ function isTokenValid(token) {
 	if (!token) return false;
 	try {
 		const payload = JSON.parse(atob(token.split(".")[1]));
-		// Valid if not expired (with 5 min buffer)
+	
 		return payload.exp > (Date.now() / 1000) + 300;
 	} catch {
 		return false;
@@ -147,8 +147,7 @@ export default function SignalingServerSection() {
 	const [testingServers, setTestingServers] = useState({});
 	const [revokingServers, setRevokingServers] = useState({});
 
-	// accessStatusMap kept in both state (for rendering) and ref (for polling
-	// closure) so polling never causes infinite re-renders
+	
 	const [accessStatusMap, setAccessStatusMap] = useState({});
 	const accessStatusRef = useRef({});
 
@@ -157,7 +156,6 @@ export default function SignalingServerSection() {
 		setAccessStatusMap(prev => ({ ...prev, [url]: status }));
 	};
 
-	// ── Initialize accessStatusMap from localStorage on mount / server change ──
 	useEffect(() => {
 		if (servers.length === 0) return;
 		const initial = {};
@@ -166,7 +164,6 @@ export default function SignalingServerSection() {
 			if (isTokenValid(token)) {
 				initial[url] = "approved";
 			} else if (accessStatusRef.current[url] !== "approved") {
-				// Don't downgrade an already-approved entry
 				initial[url] = initial[url] || "unknown";
 			}
 		});
@@ -174,7 +171,6 @@ export default function SignalingServerSection() {
 		setAccessStatusMap(prev => ({ ...prev, ...initial }));
 	}, [servers]);
 
-	// ── Check /auth/status for one server ─────────────────────────────────────
 	const checkAccessStatus = async (serverURL) => {
 		const token = localStorage.getItem(`token_${toHttp(serverURL)}`);
 		if (!token) { setAccessStatus(serverURL, "unknown"); return; }
@@ -273,7 +269,6 @@ export default function SignalingServerSection() {
 		}
 	};
 
-	// ── Polling — uses ref so accessStatusMap is NOT a dependency ─────────────
 	useEffect(() => {
 		if (!identityManager || servers.length === 0) return;
 		const im = identityManager;
@@ -283,25 +278,25 @@ export default function SignalingServerSection() {
 				const currentStatus = accessStatusRef.current[server.url];
 
 				if (currentStatus === "approved") {
-					// Just verify token is still valid locally — no network call needed
+					// Just verify token is still valid locally 
 					// unless token is about to expire
 					const token = localStorage.getItem(`token_${toHttp(server.url)}`);
 					if (!isTokenValid(token)) {
-						// Token expired — try to re-authenticate silently
+						
 						try {
 							const newToken = await authenticateWithServer(
 								toHttp(server.url), im.getPublicKey(), im.getPrivateKey()
 							);
 							if (newToken) {
 								localStorage.setItem(`token_${toHttp(server.url)}`, newToken);
-								// Still approved — no status change needed
+								
 							} else {
 								setAccessStatus(server.url, "pending");
 							}
 						} catch { /* server unreachable */ }
 					}
 				} else {
-					// pending / unknown — try to authenticate (will succeed once admin approves)
+				
 					try {
 						const token = await authenticateWithServer(
 							toHttp(server.url), im.getPublicKey(), im.getPrivateKey()
@@ -321,7 +316,7 @@ export default function SignalingServerSection() {
 		poll();
 		const interval = setInterval(poll, 5000);
 		return () => clearInterval(interval);
-		// accessStatusMap intentionally NOT in deps — we use accessStatusRef instead
+	
 	}, [identityManager, servers]);
 
 	// ── Load servers ──────────────────────────────────────────────────────────
@@ -412,7 +407,7 @@ export default function SignalingServerSection() {
 		if (servers.some(s => s.url === newServerURL)) { alert('This server URL already exists'); return; }
 		if (!identityManager) { alert('Not logged in'); return; }
 
-		const im = identityManager; // capture stable reference
+		const im = identityManager; 
 		setAddingServer(true);
 
 		try {

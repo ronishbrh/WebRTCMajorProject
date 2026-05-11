@@ -18,7 +18,6 @@ export class SocketManager {
     };
   }
 
-  // Always overwrite — allows re-subscription after remount
   subscribe(type, handler) {
     this.listeners.set(type, handler);
     return () => this.listeners.delete(type);
@@ -28,7 +27,7 @@ export class SocketManager {
     if (this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data));
     } else {
-      console.error("[WS] Cannot send — readyState:", this.ws.readyState);
+      console.error("[WS] Cannot send : readyState:", this.ws.readyState);
     }
   }
 
@@ -45,13 +44,10 @@ export class SocketManager {
 export function UserProvider({ children }) {
   const [identityManager, _setIdentityManager] = useState(null);
 
-  // Keep a ref in sync with state so consumers can read the latest value
-  // synchronously without triggering re-renders
   const identityManagerRef = useRef(null);
 
-  // Wrap setter so we only trigger a re-render when the value actually changes
   const setIdentityManager = useCallback((im) => {
-    if (im === identityManagerRef.current) return; // no-op if same instance
+    if (im === identityManagerRef.current) return; 
     identityManagerRef.current = im;
     _setIdentityManager(im);
   }, []);
